@@ -60,6 +60,12 @@ export function resolveSidebarRowAccessibility(input: {
   };
 }
 
+/** A draft row's status: unsent, or sent and waiting for its launcher's new machine. */
+/** `sendHold` is why the draft's send is held, e.g. "Starting boat sandbox". */
+export function resolveSidebarDraftStatusLabel(sendHold: string | null): string {
+  return sendHold === null ? "Unsent draft" : `${sendHold}…`;
+}
+
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription. Each prewarmed
 // thread holds a live, fully hydrated detail subscription (all messages and

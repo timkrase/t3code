@@ -9,6 +9,7 @@ import {
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
+  PlusIcon,
   ScaleIcon,
 } from "lucide-react";
 import {
@@ -29,9 +30,13 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject, useThreadShell, useThreadShellsForProjectRefs } from "../state/entities";
 import {
   type EnvMode,
+  type EnvironmentLaunchOptions,
   type EnvironmentOption,
+  launcherPickerValue,
+  parseRunOnPickerValue,
   resolveContextStripLabelsCompact,
   resolveCurrentWorkspaceLabel,
+  resolveRunOnPickerValue,
   resolveEnvModeLabel,
   resolveLockedWorkspaceLabel,
   resolvePreviousWorktreeLabel,
@@ -98,6 +103,7 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  environmentLaunch?: EnvironmentLaunchOptions | undefined;
   composerControlsHostRef?: (element: HTMLDivElement | null) => void;
   contextStripVisible?: boolean;
 }
@@ -150,6 +156,7 @@ interface RunContextSelectorProps {
   showEnvironmentPicker: boolean;
   showEnvironmentIndicator: boolean;
   onEnvironmentChange: ((environmentId: EnvironmentId) => void) | undefined;
+  environmentLaunch: EnvironmentLaunchOptions | undefined;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
@@ -169,8 +176,9 @@ const RunContextSelector = memo(function RunContextSelector({
   environmentId,
   availableEnvironments,
   showEnvironmentPicker,
-  showEnvironmentIndicator,
+  showEnvironmentIndicator: showActiveEnvironmentIndicator,
   onEnvironmentChange,
+  environmentLaunch,
   effectiveEnvMode,
   activeWorktreePath,
   onEnvModeChange,
@@ -183,6 +191,12 @@ const RunContextSelector = memo(function RunContextSelector({
     () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
     [availableEnvironments, environmentId],
   );
+  const selectedLauncher =
+    environmentLaunch?.launchers.find(
+      (launcher) => launcher.id === environmentLaunch.selectedLauncherId,
+    ) ?? null;
+  const runOnLabel = selectedLauncher ? `New ${selectedLauncher.label}` : autoEnvironmentLabel;
+  const showEnvironmentIndicator = showActiveEnvironmentIndicator || selectedLauncher !== null;
   const WorkspaceIcon =
     effectiveEnvMode === "worktree"
       ? FolderGit2Icon
@@ -233,7 +247,12 @@ const RunContextSelector = memo(function RunContextSelector({
     <span className="inline-flex shrink-0 items-center gap-0.5">
       <Tooltip>
         <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-          {autoEnvironmentLabel ? (
+          {selectedLauncher ? (
+            <PlusIcon
+              className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
+              aria-hidden="true"
+            />
+          ) : autoEnvironmentLabel ? (
             <ScaleIcon
               className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
               aria-hidden="true"
@@ -245,7 +264,7 @@ const RunContextSelector = memo(function RunContextSelector({
             />
           )}
         </TooltipTrigger>
-        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+        <TooltipPopup>{runOnLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
       </Tooltip>
       {workspaceIcon}
     </span>
@@ -256,7 +275,7 @@ const RunContextSelector = memo(function RunContextSelector({
     <>
       {icon}
       <ComposerContextLabel displayMode={displayMode}>
-        {autoEnvironmentLabel ??
+        {runOnLabel ??
           (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel)}
       </ComposerContextLabel>
     </>
@@ -319,12 +338,18 @@ const RunContextSelector = memo(function RunContextSelector({
             <MenuGroup>
               <MenuGroupLabel>Run on</MenuGroupLabel>
               <MenuRadioGroup
-                value={autoEnvironmentLabel ? "auto" : environmentId}
-                onValueChange={(value) =>
-                  value === "auto"
-                    ? onAutoEnvironment?.()
-                    : onEnvironmentChange(value as EnvironmentId)
-                }
+                value={resolveRunOnPickerValue({
+                  environmentId,
+                  autoEnvironment: Boolean(autoEnvironmentLabel),
+                  selectedLauncherId: selectedLauncher?.id ?? null,
+                })}
+                onValueChange={(value: string) => {
+                  const selection = parseRunOnPickerValue(value);
+                  if (selection.kind === "auto") onAutoEnvironment?.();
+                  else if (selection.kind === "launcher")
+                    environmentLaunch?.onSelect(selection.launcherId);
+                  else onEnvironmentChange(selection.environmentId);
+                }}
               >
                 {onAutoEnvironment && (
                   <MenuRadioItem
@@ -353,6 +378,19 @@ const RunContextSelector = memo(function RunContextSelector({
                     <span className="flex min-w-0 items-center gap-1.5">
                       <EnvironmentMachineIcon kind={env.machine} className="size-3" />
                       <span className="min-w-0 truncate">{env.label}</span>
+                    </span>
+                  </MenuRadioItem>
+                ))}
+                {environmentLaunch?.launchers.map((launcher) => (
+                  <MenuRadioItem
+                    key={launcher.id}
+                    disabled={envLocked}
+                    value={launcherPickerValue(launcher.id)}
+                    closeOnClick
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <PlusIcon className="size-3" aria-hidden="true" />
+                      <span className="min-w-0 truncate">New {launcher.label}</span>
                     </span>
                   </MenuRadioItem>
                 ))}
@@ -614,6 +652,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
+  environmentLaunch,
   composerControlsHostRef,
   contextStripVisible = true,
 }: BranchToolbarProps) {
@@ -695,7 +734,9 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
 
   const showEnvironmentPicker = Boolean(
-    availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
+    availableEnvironments &&
+    (availableEnvironments.length > 1 || (environmentLaunch?.launchers.length ?? 0) > 0) &&
+    onEnvironmentChange,
   );
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
@@ -725,6 +766,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             showEnvironmentPicker={showEnvironmentPicker}
             showEnvironmentIndicator={activeEnvironmentOption !== null}
             onEnvironmentChange={onEnvironmentChange}
+            environmentLaunch={environmentLaunch}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
@@ -779,6 +821,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             showEnvironmentPicker={showEnvironmentPicker}
             showEnvironmentIndicator={showEnvironmentIndicator}
             onEnvironmentChange={onEnvironmentChange}
+            environmentLaunch={environmentLaunch}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
@@ -805,6 +848,7 @@ export const BranchToolbar = memo(function BranchToolbar({
                 environmentId={environmentId}
                 availableEnvironments={availableEnvironments}
                 {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
+                environmentLaunch={environmentLaunch}
               />
               {showGitControls ? (
                 <Separator

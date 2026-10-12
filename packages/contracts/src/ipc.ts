@@ -464,6 +464,38 @@ export const DesktopSshBearerRequestInputSchema = Schema.Struct({
   bearerToken: Schema.String,
 });
 
+/**
+ * The JSON line an environment launcher prints last on stdout. `ssh.host` is
+ * an ssh-config alias or hostname; `user` and `port` override what ssh
+ * resolves for it. `projectPath` is the checkout on the new machine.
+ */
+export const EnvironmentLauncherOutputSchema = Schema.Struct({
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+  ssh: Schema.Struct({
+    host: TrimmedNonEmptyString,
+    user: Schema.optionalKey(TrimmedNonEmptyString),
+    port: Schema.optionalKey(Schema.Int),
+  }),
+  projectPath: TrimmedNonEmptyString,
+});
+export type EnvironmentLauncherOutput = typeof EnvironmentLauncherOutputSchema.Type;
+
+export const DesktopEnvironmentLauncherRunInputSchema = Schema.Struct({
+  command: Schema.String,
+  /** Working directory; the home directory when null or missing. */
+  cwd: Schema.NullOr(Schema.String),
+  env: Schema.Record(Schema.String, Schema.String),
+});
+export type DesktopEnvironmentLauncherRunInput =
+  typeof DesktopEnvironmentLauncherRunInputSchema.Type;
+
+export const DesktopEnvironmentLaunchResultSchema = Schema.Struct({
+  label: Schema.NullOr(Schema.String),
+  target: DesktopSshEnvironmentTargetSchema,
+  projectPath: Schema.String,
+});
+export type DesktopEnvironmentLaunchResult = typeof DesktopEnvironmentLaunchResultSchema.Type;
+
 export const DesktopSshBearerBootstrapInputSchema = Schema.Struct({
   httpBaseUrl: Schema.String,
   credential: Schema.String,
@@ -1169,6 +1201,12 @@ export interface DesktopBridge {
     options?: { issuePairingToken?: boolean },
   ) => Promise<DesktopSshEnvironmentBootstrap>;
   disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
+  /** Runs an environment launcher's create command. Absent on older desktop builds. */
+  launchEnvironment?: (
+    input: DesktopEnvironmentLauncherRunInput,
+  ) => Promise<DesktopEnvironmentLaunchResult>;
+  /** Runs a launcher's destroy, stop, or wake command. Absent on older desktop builds. */
+  runEnvironmentLauncherCommand?: (input: DesktopEnvironmentLauncherRunInput) => Promise<void>;
   fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;
   bootstrapSshBearerSession: (
     httpBaseUrl: string,

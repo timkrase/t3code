@@ -90,6 +90,13 @@ import {
   formatDesktopSshTarget,
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { EnvironmentLaunchersSettings } from "./EnvironmentLaunchersSettings";
+import { destroyLaunchedEnvironment } from "../../hooks/useEnvironmentLauncher";
+import {
+  findLaunchedEnvironment,
+  stopLaunchedEnvironment,
+  wakeLaunchedEnvironment,
+} from "../../state/launchedEnvironments";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { Input } from "../ui/input";
@@ -2761,6 +2768,27 @@ export function ConnectionsSettings() {
   const handleSetSavedBackendEnabled = useCallback(
     async (environmentId: EnvironmentId, enabled: boolean) => {
       setSavedBackendError(null);
+      // A launched machine with stop and wake commands is stopped and woken
+      // along with the switch, so switching it off also stops paying for it.
+      const launcher = findLaunchedEnvironment(environmentId)?.launcher;
+      if (launcher?.stopCommand !== undefined && launcher.wakeCommand !== undefined) {
+        try {
+          await (enabled
+            ? wakeLaunchedEnvironment(environmentId)
+            : stopLaunchedEnvironment(environmentId, { switchOff: true }));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "An error occurred.";
+          setSavedBackendError(message);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: `Could not ${enabled ? "wake" : "stop"} ${launcher.label}`,
+              description: message,
+            }),
+          );
+        }
+        return;
+      }
       const result = await setEnvironmentEnabled({ environmentId, enabled });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -2816,12 +2844,29 @@ export function ConnectionsSettings() {
         setPendingT3ConnectRemoval(environment);
         return;
       }
+      const destroyCommand = findLaunchedEnvironment(environment.environmentId)?.launcher
+        ?.destroyCommand;
       // Fail closed: no mounted confirm host means no removal.
       const confirmed = await requestConfirmDialog(
-        `Remove ${environment.label} from this device?\nThis forgets its pairing, credentials, and cached threads here. Switch it off instead to keep it saved.`,
+        destroyCommand === undefined
+          ? `Remove ${environment.label} from this device?\nThis forgets its pairing, credentials, and cached threads here. Switch it off instead to keep it saved.`
+          : `Remove ${environment.label} and destroy its machine?\nThis runs ${destroyCommand}, which deletes the machine and every thread on it.`,
         { variant: "destructive" },
       );
-      if (confirmed === true) await removeSavedBackend(environment);
+      if (confirmed !== true) return;
+      try {
+        await destroyLaunchedEnvironment(environment.environmentId);
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Could not destroy ${environment.label}`,
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+        return;
+      }
+      await removeSavedBackend(environment);
     },
     [removeSavedBackend],
   );
@@ -4166,6 +4211,7 @@ export function ConnectionsSettings() {
           }}
         />
       ) : null}
+      <EnvironmentLaunchersSettings />
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>

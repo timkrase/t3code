@@ -18,6 +18,7 @@ import {
   formatWorkingDurationLabel,
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
+  resolveSidebarDraftStatusLabel,
   getSidebarForkParentThreadId,
   getSidebarThreadIdsToPrewarm,
   hasUnseenCompletion,
@@ -2314,5 +2315,15 @@ describe("Working shelf (beta)", () => {
         unsnooze: false,
       });
     });
+  });
+});
+
+describe("resolveSidebarDraftStatusLabel", () => {
+  it("labels an unsent draft", () => {
+    expect(resolveSidebarDraftStatusLabel(null)).toBe("Unsent draft");
+  });
+
+  it("labels a draft whose send is starting a machine", () => {
+    expect(resolveSidebarDraftStatusLabel("Starting boat sandbox")).toBe("Starting boat sandbox…");
   });
 });

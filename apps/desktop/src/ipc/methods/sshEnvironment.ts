@@ -9,6 +9,8 @@ import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/enviro
 import {
   EnvironmentAuthInvalidError,
   DesktopDiscoveredSshHostSchema,
+  DesktopEnvironmentLaunchResultSchema,
+  DesktopEnvironmentLauncherRunInputSchema,
   DesktopSshBearerBootstrapInputSchema,
   DesktopSshBearerRequestInputSchema,
   DesktopSshEnvironmentEnsureInputSchema,
@@ -35,6 +37,11 @@ import * as Schema from "effect/Schema";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as DesktopSshEnvironment from "../../ssh/DesktopSshEnvironment.ts";
+import {
+  EnvironmentLauncherError,
+  parseEnvironmentLauncherOutput,
+  runEnvironmentLauncherCommand as runLauncherCommand,
+} from "../../ssh/environmentLauncher.ts";
 import * as DesktopSshPasswordPrompts from "../../ssh/DesktopSshPasswordPrompts.ts";
 
 type DesktopSshEnvironmentRequestOperation =
@@ -154,6 +161,43 @@ export const disconnectSshEnvironment = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.sshEnvironment.disconnectEnvironment")(function* (target) {
     const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
     yield* sshEnvironment.disconnectEnvironment(target);
+  }),
+});
+
+export const launchEnvironment = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.LAUNCH_ENVIRONMENT_CHANNEL,
+  payload: DesktopEnvironmentLauncherRunInputSchema,
+  result: DesktopEnvironmentLaunchResultSchema,
+  handler: Effect.fn("desktop.ipc.sshEnvironment.launchEnvironment")(function* (input) {
+    const stdout = yield* runLauncherCommand(input);
+    const output = parseEnvironmentLauncherOutput(stdout);
+    if (output === null) {
+      return yield* new EnvironmentLauncherError({
+        message:
+          'The command finished without printing a result. Its last stdout line must be JSON like {"ssh":{"host":"my-sandbox"},"projectPath":"/home/user/app"}.',
+      });
+    }
+    const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+    const resolved = yield* sshEnvironment.resolveHost(output.ssh.host);
+    return {
+      label: output.label ?? null,
+      target: {
+        ...resolved,
+        username: output.ssh.user ?? resolved.username,
+        port: output.ssh.port ?? resolved.port,
+      },
+      projectPath: output.projectPath,
+    };
+  }),
+});
+
+/** Runs a launcher's destroy, stop, or wake command; only success matters. */
+export const runEnvironmentLauncherCommand = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.RUN_ENVIRONMENT_LAUNCHER_COMMAND_CHANNEL,
+  payload: DesktopEnvironmentLauncherRunInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.sshEnvironment.runEnvironmentLauncherCommand")(function* (input) {
+    yield* runLauncherCommand(input);
   }),
 });
 

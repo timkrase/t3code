@@ -201,6 +201,7 @@ import {
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
+  resolveSidebarDraftStatusLabel,
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
@@ -225,6 +226,8 @@ import {
   type SidebarListMarker,
   type SidebarSection,
 } from "./Sidebar.logic";
+import { Spinner } from "./ui/spinner";
+import { composerSendHoldAtom } from "../state/launchedEnvironments";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   createSidebarCollisionDetection,
@@ -827,9 +830,10 @@ function SidebarSectionHeader(props: {
 // nothing else: project name, then the typed prompt. All the draft's
 // settings (model, env mode, branch, worktree) still travel with it —
 // clicking is a plain navigation to /draft/$draftId, which touches nothing.
-// While the draft is open the row renders a frozen snapshot (see
-// SidebarDraftBlock); memoized so per-keystroke block re-renders skip it
-// entirely.
+// A sent draft that is starting a launcher's machine shows that instead of
+// the project name until its server thread takes over. While the draft is
+// open the row renders a frozen snapshot (see SidebarDraftBlock); memoized
+// so per-keystroke block re-renders skip it entirely.
 const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
   composer: ComposerThreadDraftState;
@@ -841,6 +845,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
   const { composer, draftId, onContextMenu, onDiscard, onNavigate } = props;
+  const sendHold = useAtomValue(composerSendHoldAtom(draftId));
   const promptPreview =
     replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label)
       .trim()
@@ -859,7 +864,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
       : `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
   const accessibility = resolveSidebarRowAccessibility({
     title: preview,
-    statusLabel: "Unsent draft",
+    statusLabel: resolveSidebarDraftStatusLabel(sendHold),
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -915,14 +920,26 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         <span className="sr-only">{preview}</span>
         <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
           <div className="flex h-5 min-w-0 items-center gap-1.5">
-            <SquarePenIcon aria-hidden className={draftPenClassName} />
+            {sendHold === null ? (
+              <SquarePenIcon aria-hidden className={draftPenClassName} />
+            ) : (
+              <Spinner size="xs" tone="muted" className="shrink-0" />
+            )}
             {props.project ? (
               <ProjectFavicon project={props.project} className="size-4 shrink-0" />
             ) : null}
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
-              {props.projectDisplayName}
+              {sendHold === null
+                ? props.projectDisplayName
+                : resolveSidebarDraftStatusLabel(sendHold)}
             </span>
-            <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
+            {/* Discarding mid-launch would strand the new machine. */}
+            <span
+              className={cn(
+                "ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end",
+                sendHold !== null && "hidden",
+              )}
+            >
               <Tooltip>
                 <TooltipTrigger
                   render={

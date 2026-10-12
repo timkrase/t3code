@@ -1842,6 +1842,20 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("keeps a pending launcher until the draft moves to another project or it is cleared", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setDraftThreadContext(draftId, { pendingLauncherId: "boat" });
+    store.setDraftThreadContext(draftId, { runtimeMode: "full-access" });
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    expect(store.getDraftThread(draftId)?.pendingLauncherId).toBe("boat");
+    store.setDraftThreadContext(draftId, { pendingLauncherId: null });
+    expect(store.getDraftThread(draftId)?.pendingLauncherId).toBeUndefined();
+    store.setDraftThreadContext(draftId, { pendingLauncherId: "boat" });
+    store.setDraftThreadContext(draftId, { projectRef: remoteProjectRef });
+    expect(store.getDraftThread(draftId)?.pendingLauncherId).toBeUndefined();
+  });
+
   it("does not opt a legacy branch choice into balancing when runtime mode changes", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId, branch: "feature/pinned" });

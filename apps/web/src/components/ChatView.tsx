@@ -30,7 +30,7 @@ import {
   latestExecutedRun,
   latestRootProviderFailure,
 } from "@t3tools/shared/orchestrationV2ThreadError";
-import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
+import type { ClientSettings, UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
   hasProviderUsageLimits,
@@ -71,6 +71,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   type ResolvedKeybindingsConfig,
+  type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadId,
   type ThreadLinkedPullRequest,
@@ -163,7 +164,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -339,6 +340,12 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { useLaunchEnvironment } from "../hooks/useEnvironmentLauncher";
+import {
+  composerSendHoldAtom,
+  holdLaunchedEnvironmentAwake,
+  wakeLaunchedEnvironment,
+} from "../state/launchedEnvironments";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
@@ -360,7 +367,11 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
+import {
+  buildDraftThreadRouteParams,
+  buildThreadRouteParams,
+  resolveThreadRouteTarget,
+} from "../threadRoutes";
 import {
   isSameSidebarThreadRef,
   useSidebarPendingFileDropStore,
@@ -420,6 +431,7 @@ import { useProjectClone } from "../state/projectClones";
 import { projectCloneDisplayName, projectCloneProgressSummary } from "@t3tools/contracts";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
+  readProject,
   resolveThreadDetailRef,
   useEnvironmentSupportsServerBrowser,
   useProject,
@@ -700,6 +712,12 @@ const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
+const selectLaunchedEnvironments = (settings: {
+  launchedEnvironments: ClientSettings["launchedEnvironments"];
+}) => settings.launchedEnvironments;
+const selectEnvironmentLaunchers = (settings: {
+  environmentLaunchers: ClientSettings["environmentLaunchers"];
+}) => settings.environmentLaunchers;
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
 const DevicePanel = lazy(() =>
@@ -1778,6 +1796,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
+  const router = useRouter();
   const citationLocation = useLocation({
     select: (location) => ({
       href: location.href,
@@ -3031,7 +3050,13 @@ export default function ChatView(props: ChatViewProps) {
     advertisedFileAttachmentBytes === null
       ? null
       : clampFileAttachmentUploadBytes(advertisedFileAttachmentBytes);
-  const envLocked = Boolean(activeThread && (activeMessageCount > 0 || activeRuntime !== null));
+  // Why this composer's send is held while its machine starts or wakes.
+  const sendHoldAtom = composerSendHoldAtom(draftId ?? routeThreadKey);
+  const sendHold = useAtomValue(sendHoldAtom);
+  // The machine a send is starting decides where the draft runs, so hold the picker.
+  const envLocked =
+    Boolean(activeThread && (activeMessageCount > 0 || activeRuntime !== null)) ||
+    sendHold !== null;
 
   const loadBalancingSettings = useClientSettings();
   const automaticEnvironment = Boolean(
@@ -4416,6 +4441,7 @@ export default function ChatView(props: ChatViewProps) {
     setDraftThreadContext(draftId, {
       environmentSelection: "auto",
       loadBalancedEnvironmentId: null,
+      pendingLauncherId: null,
       branch: null,
       worktreePath: null,
     });
@@ -4482,6 +4508,7 @@ export default function ChatView(props: ChatViewProps) {
         } else {
           setDraftThreadContext(draftId, {
             projectRef,
+            pendingLauncherId: null,
             environmentSelection: "manual",
             loadBalancedEnvironmentId: null,
           });
@@ -4524,6 +4551,55 @@ export default function ChatView(props: ChatViewProps) {
       setLogicalProjectDraftThreadId,
     ],
   );
+
+  const environmentLaunchers = useClientSettings(selectEnvironmentLaunchers);
+  const launchedEnvironments = useClientSettings(selectLaunchedEnvironments);
+  // A launched machine that is stopped or gone wakes when this composer sends.
+  const wakeLauncher = (() => {
+    const launched = launchedEnvironments.find((entry) => entry.environmentId === environmentId);
+    if (!launched || (launched.stopped !== true && !activeEnvironmentUnavailable)) return null;
+    const launcher = environmentLaunchers.find((entry) => entry.id === launched.launcherId);
+    return launcher?.wakeCommand === undefined ? null : launcher;
+  })();
+  const launchEnvironment = useLaunchEnvironment();
+  // Picking a launcher only marks the draft; the machine starts when it is sent.
+  const onSelectEnvironmentLauncher = useCallback(
+    (launcherId: string) => {
+      if (envLocked || !draftId || sendInFlightRef.current) return;
+      environmentChangeRef.current = null;
+      setIsEnvironmentChanging(false);
+      setDraftThreadContext(draftId, {
+        pendingLauncherId: launcherId,
+        environmentSelection: "manual",
+        loadBalancedEnvironmentId: null,
+      });
+    },
+    [draftId, envLocked, sendInFlightRef, setDraftThreadContext],
+  );
+  const environmentLaunch = useMemo(
+    () =>
+      draftId &&
+      !activeProjectIsScratch &&
+      environmentLaunchers.length > 0 &&
+      window.desktopBridge?.launchEnvironment !== undefined
+        ? {
+            launchers: environmentLaunchers,
+            selectedLauncherId: draftThread?.pendingLauncherId ?? null,
+            onSelect: onSelectEnvironmentLauncher,
+          }
+        : undefined,
+    [
+      activeProjectIsScratch,
+      draftId,
+      draftThread?.pendingLauncherId,
+      environmentLaunchers,
+      onSelectEnvironmentLauncher,
+    ],
+  );
+  const pendingEnvironmentLauncher =
+    environmentLaunchers.find(
+      (launcher) => launcher.id === environmentLaunch?.selectedLauncherId,
+    ) ?? null;
 
   const activeTerminalGroup =
     terminalUiState.terminalGroups.find(
@@ -8730,7 +8806,181 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
-  const onSend = async (
+  // Starts a send's pending launcher machine and moves the draft onto it. This
+  // takes about a minute, so the user gets a fresh draft at once while the
+  // sidebar shows this one as starting. Resolves to the new project, or null
+  // once the user has been told why the send stopped.
+  // Checked against the machine's live config, which a just-started or woken
+  // machine only now has.
+  const isModelReadyOn = (targetEnvironmentId: EnvironmentId, modelSelection: ModelSelection) => {
+    const config = appAtomRegistry.get(environmentServerConfigsAtom).get(targetEnvironmentId);
+    const provider = config
+      ? applyProviderInstanceSettings(
+          deriveProviderInstanceEntries(config.providers),
+          config.settings,
+        ).find((entry) => entry.instanceId === modelSelection.instanceId)
+      : undefined;
+    return provider?.enabled === true && provider.isAvailable && provider.status === "ready";
+  };
+
+  // Wakes this composer's stopped launched machine, then un-settles the thread
+  // so it is not stopped again once the turn ends. False when the send ends here.
+  const wakeEnvironmentForSend = async (
+    launcher: (typeof environmentLaunchers)[number],
+    modelSelection: ModelSelection,
+  ): Promise<boolean> => {
+    const wakingThreadKey = routeThreadKey;
+    appAtomRegistry.set(sendHoldAtom, `Waking ${launcher.label}`);
+    const fail = (title: string, description: string) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title,
+          description,
+          ...(currentRouteThreadKeyRef.current === wakingThreadKey
+            ? {}
+            : {
+                actionProps: {
+                  children: "Open",
+                  onClick: () => {
+                    void navigate(
+                      draftId
+                        ? { to: "/draft/$draftId", params: { draftId } }
+                        : {
+                            to: "/$environmentId/$threadId",
+                            params: buildThreadRouteParams(routeThreadRef),
+                          },
+                    );
+                  },
+                },
+              }),
+        }),
+      );
+      return false;
+    };
+    const toastId = toastManager.add({
+      type: "loading",
+      title: `Waking ${launcher.label}…`,
+      description: "Your message sends once the machine is back.",
+      timeout: 0,
+    });
+    try {
+      await wakeLaunchedEnvironment(environmentId);
+    } catch (error) {
+      return fail(
+        `Could not wake ${launcher.label}`,
+        error instanceof Error ? error.message : "An error occurred.",
+      );
+    } finally {
+      toastManager.close(toastId);
+    }
+    if (!isModelReadyOn(environmentId, modelSelection)) {
+      return fail(
+        `Could not send on ${launcher.label}`,
+        `${modelSelection.model} is not available there. Choose another model and send again.`,
+      );
+    }
+    if (activeThreadSettled && activeThreadRef) {
+      const result = await unsettleThreadMutation({
+        environmentId,
+        input: { threadId: activeThreadRef.threadId, reason: "user" },
+      });
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        return fail(
+          "Could not un-settle the thread",
+          error instanceof Error ? error.message : "An error occurred.",
+        );
+      }
+    }
+    return true;
+  };
+
+  const startEnvironmentForSend = async (
+    launcher: (typeof environmentLaunchers)[number],
+    sourceProject: NonNullable<typeof activeProject>,
+    modelSelection: ModelSelection,
+  ) => {
+    if (!draftId) return null;
+    const launchingDraftId = draftId;
+    appAtomRegistry.set(composerSendHoldAtom(launchingDraftId), `Starting ${launcher.label}`);
+    if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      void handleNewThread(
+        scopeProjectRef(sourceProject.environmentId, sourceProject.id),
+        resolveBackgroundDraftWorkspaceOptions({
+          envMode: sendEnvMode,
+          branch: activeThreadBranch,
+          startFromOrigin,
+        }),
+      ).catch((error: unknown) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Could not open a fresh composer",
+            description: error instanceof Error ? error.message : undefined,
+          }),
+        );
+      });
+    }
+    const fail = (title: string, description: string) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title,
+          description,
+          actionProps: {
+            children: "Open",
+            onClick: () => {
+              void navigate({ to: "/draft/$draftId", params: { draftId: launchingDraftId } });
+            },
+          },
+        }),
+      );
+      return null;
+    };
+    const toastId = toastManager.add({
+      type: "loading",
+      title: `Starting ${launcher.label}…`,
+      description: "Your message sends once the machine is connected.",
+      timeout: 0,
+    });
+    let projectRef: ScopedProjectRef;
+    try {
+      projectRef = await launchEnvironment(launcher, sourceProject);
+    } catch (error) {
+      return fail(
+        `Could not start ${launcher.label}`,
+        error instanceof Error ? error.message : "An error occurred.",
+      );
+    } finally {
+      toastManager.close(toastId);
+    }
+    const draft = getDraftSession(launchingDraftId);
+    if (!draft || draft.promotedTo) return null;
+    // The launched checkout is already the thread's own branch, so it runs there.
+    setDraftThreadContext(launchingDraftId, {
+      projectRef,
+      pendingLauncherId: null,
+      environmentSelection: "manual",
+      loadBalancedEnvironmentId: null,
+      envMode: "local",
+      startFromOrigin: false,
+      branch: null,
+      worktreePath: null,
+    });
+    const project = readProject(projectRef);
+    const draftSession = getDraftSession(launchingDraftId);
+    if (!project || !draftSession) return null;
+    if (!isModelReadyOn(projectRef.environmentId, modelSelection)) {
+      return fail(
+        `Could not send on ${launcher.label}`,
+        `${modelSelection.model} is not available there. Choose another model and send again.`,
+      );
+    }
+    return { project, draftSession };
+  };
+
+  const sendComposerMessage = async (
     e?: { preventDefault: () => void },
     dispatchMode: ComposerDispatchMode = "auto",
     submissionIntent: ComposerSubmissionIntent = "foreground",
@@ -8768,14 +9018,16 @@ export default function ChatView(props: ChatViewProps) {
       );
     };
     if (
-      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+      // A stopped machine's grants and connection come back when it wakes.
+      (!wakeLauncher && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) ||
       !activeThread ||
       isSendBusy ||
-      isConnecting ||
+      (isConnecting && !wakeLauncher) ||
       isRevertingCheckpoint ||
       !clientSettingsHydrated ||
       threadDetailLoading ||
       environmentChangeRef.current !== null ||
+      appAtomRegistry.get(sendHoldAtom) !== null ||
       sendInFlightRef.current ||
       feedbackUploadsInFlightRef.current.has(routeThreadKey)
     ) {
@@ -8794,7 +9046,9 @@ export default function ChatView(props: ChatViewProps) {
       });
       return;
     }
-    if (activeEnvironmentUnavailable) {
+    // A pending launcher sends on a new machine and a stopped one wakes first,
+    // so neither needs to be connected yet.
+    if (activeEnvironmentUnavailable && !pendingEnvironmentLauncher && !wakeLauncher) {
       const toastSlot = environmentUnavailableSendToastSlotRef.current;
       environmentUnavailableSendToastSlotRef.current =
         (toastSlot + 1) % ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE;
@@ -8817,7 +9071,8 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx?.providerAvailable) {
+    // A launched or woken machine's providers are checked once it is up.
+    if (!sendCtx || (!sendCtx.providerAvailable && !pendingEnvironmentLauncher && !wakeLauncher)) {
       notifyDirectAnnotationAttached();
       return;
     }
@@ -9213,18 +9468,55 @@ export default function ChatView(props: ChatViewProps) {
       );
       return;
     }
+    if (pendingEnvironmentLauncher && multipleModelSelections !== null) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Choose one model",
+          description: `Multiple models cannot start on a new ${pendingEnvironmentLauncher.label} yet.`,
+        }),
+      );
+      return;
+    }
+    if (wakeLauncher) {
+      if (multipleModelSelections !== null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Choose one model",
+            description: `Multiple models cannot start while ${wakeLauncher.label} wakes.`,
+          }),
+        );
+        return;
+      }
+      if (!(await wakeEnvironmentForSend(wakeLauncher, ctxSelectedModelSelection))) return;
+    }
+    // A pending launcher sends from the machine it starts, in the background.
+    // Everything below dispatches to the send* target rather than this view's.
+    const launchedTarget = pendingEnvironmentLauncher
+      ? await startEnvironmentForSend(
+          pendingEnvironmentLauncher,
+          activeProject,
+          ctxSelectedModelSelection,
+        )
+      : null;
+    if (pendingEnvironmentLauncher && launchedTarget === null) return;
+    const sendEnvironmentId = launchedTarget?.project.environmentId ?? environmentId;
+    const sendProject = launchedTarget?.project ?? activeProject;
+    const sendBranch = launchedTarget ? null : activeThreadBranch;
+    const sendWorktreePath = launchedTarget ? null : activeThread.worktreePath;
+    const sendWorkspaceMode = launchedTarget ? "local" : sendEnvMode;
+    const sendIntent = launchedTarget ? "background" : submissionIntent;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeMessageCount === 0;
     const baseBranchForWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
-        : null;
+      isFirstMessage && sendWorkspaceMode === "worktree" && !sendWorktreePath ? sendBranch : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThreadBranch) {
+      isFirstMessage && sendWorkspaceMode === "worktree" && !sendWorktreePath;
+    if (shouldCreateWorktree && !sendBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
@@ -9286,7 +9578,8 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     const readLiveAttachmentCapabilities = () => {
-      const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
+      const config =
+        appAtomRegistry.get(environmentServerConfigsAtom).get(sendEnvironmentId) ?? null;
       const liveSupportsAttachmentUploads =
         config?.environment.capabilities.attachmentUploads === true;
       return {
@@ -9355,13 +9648,13 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const turnUsesAttachmentUploads =
-      composerFilesSnapshot.length > 0
+      composerFilesSnapshot.length > 0 || launchedTarget
         ? attachmentCapabilitiesBeforeUpload.supportsAttachmentUploads
         : supportsAttachmentUploads;
     if (turnUsesAttachmentUploads && composerAttachmentsSnapshot.length > 0) {
       for (const attachment of composerAttachmentsSnapshot) {
         startAttachmentUpload({
-          environmentId,
+          environmentId: sendEnvironmentId,
           image: attachment,
           draftTarget: composerDraftTarget,
         });
@@ -9373,7 +9666,12 @@ export default function ChatView(props: ChatViewProps) {
         setThreadError(threadIdForSend, attachmentCapabilitiesAfterUpload.fileBlockReason);
         return;
       }
-      if (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) === null) {
+      if (
+        getUploadedAttachments({
+          environmentId: sendEnvironmentId,
+          images: composerAttachmentsSnapshot,
+        }) === null
+      ) {
         sendInFlightRef.current = false;
         setThreadError(threadIdForSend, "Retry or remove failed uploads before sending.");
         return;
@@ -9382,7 +9680,11 @@ export default function ChatView(props: ChatViewProps) {
 
     if (
       multipleModelSelections === null &&
-      shouldDockDraftHeroForSubmission({ isDraftHeroState, activeThreadKey, submissionIntent }) &&
+      shouldDockDraftHeroForSubmission({
+        isDraftHeroState,
+        activeThreadKey,
+        submissionIntent: sendIntent,
+      }) &&
       activeThreadKey
     ) {
       let resolveDockStarted: (() => void) | undefined;
@@ -9408,7 +9710,7 @@ export default function ChatView(props: ChatViewProps) {
 
     const attachmentCapabilitiesBeforeDispatch = readLiveAttachmentCapabilities();
     if (
-      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+      !readEnvironmentScope(sendEnvironmentId, AuthOrchestrationOperateScope) ||
       attachmentCapabilitiesBeforeDispatch.fileBlockReason !== null
     ) {
       sendInFlightRef.current = false;
@@ -9426,12 +9728,12 @@ export default function ChatView(props: ChatViewProps) {
       preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
       // Only a draft has a background submission to hide behind its hero.
       submissionIntent:
-        submissionIntent === "background" && !isLocalDraftThread ? "foreground" : submissionIntent,
+        sendIntent === "background" && !isLocalDraftThread ? "foreground" : sendIntent,
     });
     setWorktreeSetupRef(
       multipleModelSelections === null && baseBranchForWorktree
         ? {
-            environmentId: activeThread.environmentId,
+            environmentId: sendEnvironmentId,
             threadId: threadIdForSend,
             ownerKey: worktreeSetupOwnerKey,
           }
@@ -9441,7 +9743,10 @@ export default function ChatView(props: ChatViewProps) {
     const turnAttachmentsPromise = Promise.all(
       composerAttachmentsSnapshot.map(async (attachment) => {
         if (turnUsesAttachmentUploads) {
-          const uploaded = getUploadedAttachments({ environmentId, images: [attachment] })?.[0];
+          const uploaded = getUploadedAttachments({
+            environmentId: sendEnvironmentId,
+            images: [attachment],
+          })?.[0];
           if (!uploaded) {
             throw new Error(`Attachment '${attachment.name}' did not finish uploading.`);
           }
@@ -9756,7 +10061,7 @@ export default function ChatView(props: ChatViewProps) {
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
       setTimelineAnchor({
-        threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+        threadKey: scopedThreadKey(scopeThreadRef(sendEnvironmentId, threadIdForSend)),
         messageId: messageIdForSend,
       });
     }
@@ -9858,7 +10163,7 @@ export default function ChatView(props: ChatViewProps) {
 
     if (failure === null && compactBeforeSend) {
       const compactResult = await startThreadTurn({
-        environmentId,
+        environmentId: sendEnvironmentId,
         input: {
           threadId: threadIdForSend,
           message: { messageId: newMessageId(), role: "user", text: "/compact", attachments: [] },
@@ -9881,13 +10186,13 @@ export default function ChatView(props: ChatViewProps) {
               ...(isLocalDraftThread
                 ? {
                     createThread: {
-                      projectId: activeProject.id,
+                      projectId: sendProject.id,
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode: sendInteractionMode,
-                      branch: activeThreadBranch,
-                      worktreePath: activeThread.worktreePath,
+                      branch: sendBranch,
+                      worktreePath: sendWorktreePath,
                       createdAt: activeThread.createdAt,
                     },
                   }
@@ -9895,7 +10200,7 @@ export default function ChatView(props: ChatViewProps) {
               ...(baseBranchForWorktree
                 ? {
                     prepareWorktree: {
-                      projectCwd: activeProject.workspaceRoot,
+                      projectCwd: sendProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
                     },
@@ -9905,12 +10210,12 @@ export default function ChatView(props: ChatViewProps) {
             }
           : undefined;
       const backgroundThreadRef =
-        submissionIntent === "background" && isLocalDraftThread
-          ? scopeThreadRef(environmentId, threadIdForSend)
+        sendIntent === "background" && isLocalDraftThread
+          ? scopeThreadRef(sendEnvironmentId, threadIdForSend)
           : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
       const startPromise = startThreadTurn({
-        environmentId,
+        environmentId: sendEnvironmentId,
         input: {
           threadId: threadIdForSend,
           message: {
@@ -9932,8 +10237,8 @@ export default function ChatView(props: ChatViewProps) {
               // from before inline context drop the records and forward the links
               // as literal text, so their turns carry the payload the legacy way.
               const supportsInlineMessageContext =
-                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                  .capabilities.inlineMessageContext === true;
+                appAtomRegistry.get(environmentServerConfigsAtom).get(sendEnvironmentId)
+                  ?.environment.capabilities.inlineMessageContext === true;
               if (!supportsInlineMessageContext) {
                 return {
                   text: serializeLegacyContextMessage({
@@ -9954,7 +10259,13 @@ export default function ChatView(props: ChatViewProps) {
           createdAt: messageCreatedAt,
         },
       });
-      if (backgroundThreadRef) {
+      if (backgroundThreadRef && launchedTarget) {
+        markPromotedDraftThreadByRef(backgroundThreadRef);
+        // The fresh draft opened when the launch began. A user who came back
+        // to this draft sees it hand over to its thread instead.
+        const routeTarget = resolveThreadRouteTarget(router.state.matches.at(-1)?.params ?? {});
+        backgroundDraftOpened = routeTarget?.kind !== "draft" || routeTarget.draftId !== draftId;
+      } else if (backgroundThreadRef) {
         markPromotedDraftThreadByRef(backgroundThreadRef);
         try {
           backgroundDraftOpened = Boolean(
@@ -9993,7 +10304,10 @@ export default function ChatView(props: ChatViewProps) {
         }
         acknowledgeActiveThreadWoke();
         if (backgroundThreadRef) {
-          if (backgroundDraftOpened || currentRouteThreadKeyRef.current !== routeThreadKey) {
+          if (
+            backgroundDraftOpened ||
+            (!launchedTarget && currentRouteThreadKeyRef.current !== routeThreadKey)
+          ) {
             finalizePromotedDraftThreadByRef(backgroundThreadRef);
           } else {
             clearBackgroundDraftSubmissionByRef(backgroundThreadRef);
@@ -10017,7 +10331,7 @@ export default function ChatView(props: ChatViewProps) {
             );
           }
         } else if (
-          submissionIntent === "background" &&
+          sendIntent === "background" &&
           currentRouteThreadKeyRef.current === routeThreadKey
         ) {
           // An existing thread keeps running; open a fresh composer like a draft does.
@@ -10027,18 +10341,19 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     if (failure !== null) {
-      if (submissionIntent === "background" && draftId && draftThread) {
+      const draftSessionForRestore = launchedTarget?.draftSession ?? draftThread;
+      if (sendIntent === "background" && draftId && draftSessionForRestore) {
         restoreFailedBackgroundDraftThread(
           draftId,
-          draftThread,
+          draftSessionForRestore,
           wasBootstrapThreadDeleted(squashAtomCommandFailure(failure))
             ? newThreadId()
             : threadIdForSend,
         );
-        clearBackgroundDraftSubmissionByRef(scopeThreadRef(environmentId, threadIdForSend));
+        clearBackgroundDraftSubmissionByRef(scopeThreadRef(sendEnvironmentId, threadIdForSend));
       }
       if (
-        backgroundDraftOpened
+        backgroundDraftOpened || launchedTarget
           ? !composerDraftHasUserContent(
               useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
             )
@@ -10108,6 +10423,20 @@ export default function ChatView(props: ChatViewProps) {
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
       resetLocalDispatch();
+    }
+  };
+  // A send that starts or wakes a machine holds its composer until the send
+  // ends, however it ends. Only the send that set the hold releases it.
+  const onSend: typeof sendComposerMessage = async (...args) => {
+    const holdAtom = sendHoldAtom;
+    const alreadyHeld = appAtomRegistry.get(holdAtom) !== null;
+    // Settled threads on a machine this send wakes must not stop it mid-send.
+    const releaseAwake = wakeLauncher ? holdLaunchedEnvironmentAwake(environmentId) : null;
+    try {
+      await sendComposerMessage(...args);
+    } finally {
+      releaseAwake?.();
+      if (!alreadyHeld) appAtomRegistry.set(holdAtom, null);
     }
   };
 
@@ -11147,6 +11476,7 @@ export default function ChatView(props: ChatViewProps) {
         ? onAutoEnvironment
         : undefined,
     onEnvironmentChange,
+    environmentLaunch,
     onEnvModeChange,
     envMode,
     ...(canOverrideServerThreadEnvMode
@@ -11618,17 +11948,19 @@ export default function ChatView(props: ChatViewProps) {
                               sendDisabledReason={
                                 !canOperateThread
                                   ? "This connection cannot change threads."
-                                  : isEnvironmentChanging
-                                    ? "Preparing machine"
-                                    : isRevertingCheckpoint
-                                      ? "Rewinding conversation"
-                                      : feedbackUploading
-                                        ? "Sending feedback"
-                                        : threadDetailLoading
-                                          ? "Messages loading"
-                                          : worktreeSetupBlocksSend
-                                            ? "Preparing worktree"
-                                            : projectCloneSendBlockReason
+                                  : sendHold !== null
+                                    ? sendHold
+                                    : isEnvironmentChanging
+                                      ? "Preparing machine"
+                                      : isRevertingCheckpoint
+                                        ? "Rewinding conversation"
+                                        : feedbackUploading
+                                          ? "Sending feedback"
+                                          : threadDetailLoading
+                                            ? "Messages loading"
+                                            : worktreeSetupBlocksSend
+                                              ? "Preparing worktree"
+                                              : projectCloneSendBlockReason
                               }
                               isPreparingWorktree={isPreparingWorktree}
                               queuedRunsControl={
@@ -11807,7 +12139,10 @@ export default function ChatView(props: ChatViewProps) {
                                 {...(canCheckoutPullRequestIntoThread
                                   ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                                   : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                                {...(hasMultipleEnvironments || environmentLaunch
+                                  ? { onEnvironmentChange }
+                                  : {})}
+                                environmentLaunch={environmentLaunch}
                                 autoEnvironmentLabel={autoEnvironmentLabel}
                                 onAutoEnvironment={
                                   draftId &&

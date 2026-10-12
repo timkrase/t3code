@@ -23,6 +23,44 @@ export interface EnvironmentOption {
   machine: EnvironmentMachineKind;
 }
 
+/** Launchers the "Run on" picker offers for creating a new machine. */
+export interface EnvironmentLaunchOptions {
+  launchers: readonly { id: string; label: string }[];
+  /** The launcher that starts a machine when the draft is sent. */
+  selectedLauncherId: string | null;
+  onSelect: (launcherId: string) => void;
+}
+
+// Launcher entries share the "Run on" list with environment ids, so they get a prefix.
+const LAUNCHER_PICKER_VALUE_PREFIX = "launch:";
+
+export function launcherPickerValue(launcherId: string): string {
+  return `${LAUNCHER_PICKER_VALUE_PREFIX}${launcherId}`;
+}
+
+/** The "Run on" value to show as selected: a pending launcher wins over auto balance. */
+export function resolveRunOnPickerValue(input: {
+  environmentId: EnvironmentId;
+  autoEnvironment: boolean;
+  selectedLauncherId: string | null;
+}): string {
+  if (input.selectedLauncherId !== null) return launcherPickerValue(input.selectedLauncherId);
+  return input.autoEnvironment ? "auto" : input.environmentId;
+}
+
+export type RunOnPickerSelection =
+  | { kind: "auto" }
+  | { kind: "launcher"; launcherId: string }
+  | { kind: "environment"; environmentId: EnvironmentId };
+
+export function parseRunOnPickerValue(value: string): RunOnPickerSelection {
+  if (value === "auto") return { kind: "auto" };
+  if (value.startsWith(LAUNCHER_PICKER_VALUE_PREFIX)) {
+    return { kind: "launcher", launcherId: value.slice(LAUNCHER_PICKER_VALUE_PREFIX.length) };
+  }
+  return { kind: "environment", environmentId: value as EnvironmentId };
+}
+
 export const EnvMode = Schema.Literals(["local", "worktree"]);
 export type EnvMode = typeof EnvMode.Type;
 

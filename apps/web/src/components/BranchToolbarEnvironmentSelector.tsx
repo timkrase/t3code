@@ -2,10 +2,16 @@ import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { ScaleIcon } from "lucide-react";
+import { PlusIcon, ScaleIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
-import type { EnvironmentOption } from "./BranchToolbar.logic";
+import {
+  type EnvironmentLaunchOptions,
+  type EnvironmentOption,
+  launcherPickerValue,
+  parseRunOnPickerValue,
+  resolveRunOnPickerValue,
+} from "./BranchToolbar.logic";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
@@ -24,6 +30,7 @@ interface BranchToolbarEnvironmentSelectorProps {
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  environmentLaunch?: EnvironmentLaunchOptions | undefined;
 }
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
@@ -33,11 +40,17 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   environmentId,
   availableEnvironments,
   onEnvironmentChange,
+  environmentLaunch,
 }: BranchToolbarEnvironmentSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment = useMemo(() => {
     return availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
   }, [availableEnvironments, environmentId]);
+  const selectedLauncher =
+    environmentLaunch?.launchers.find(
+      (launcher) => launcher.id === environmentLaunch.selectedLauncherId,
+    ) ?? null;
+  const launcherLabel = selectedLauncher ? `New ${selectedLauncher.label}` : null;
 
   const environmentItems = useMemo(
     () => [
@@ -48,8 +61,12 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         value: env.environmentId,
         label: env.label,
       })),
+      ...(environmentLaunch?.launchers ?? []).map((launcher) => ({
+        value: launcherPickerValue(launcher.id),
+        label: `New ${launcher.label}`,
+      })),
     ],
-    [availableEnvironments, autoEnvironmentLabel, onAutoEnvironment],
+    [availableEnvironments, autoEnvironmentLabel, environmentLaunch, onAutoEnvironment],
   );
 
   // The static label carries the xs control's height (h-7 sm:h-6) as well as
@@ -63,17 +80,23 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6"
         data-composer-context-control
       >
-        <EnvironmentMachineIcon
-          kind={activeEnvironment?.machine ?? "server"}
-          className="size-3 shrink-0"
-        />
-        <ComposerContextLabel>{activeEnvironment?.label ?? "Run on"}</ComposerContextLabel>
+        {selectedLauncher ? (
+          <PlusIcon className="size-3 shrink-0" aria-hidden="true" />
+        ) : (
+          <EnvironmentMachineIcon
+            kind={activeEnvironment?.machine ?? "server"}
+            className="size-3 shrink-0"
+          />
+        )}
+        <ComposerContextLabel>
+          {launcherLabel ?? activeEnvironment?.label ?? "Run on"}
+        </ComposerContextLabel>
       </span>
     );
     return (
       <Tooltip>
         <TooltipTrigger render={lockedRow} />
-        <TooltipPopup>{activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+        <TooltipPopup>{launcherLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -81,10 +104,18 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   return (
     <Select
       modal={false}
-      value={autoEnvironmentLabel ? "auto" : environmentId}
-      onValueChange={(value) =>
-        value === "auto" ? onAutoEnvironment?.() : onEnvironmentChange(value as EnvironmentId)
-      }
+      value={resolveRunOnPickerValue({
+        environmentId,
+        autoEnvironment: Boolean(autoEnvironmentLabel),
+        selectedLauncherId: selectedLauncher?.id ?? null,
+      })}
+      onValueChange={(value) => {
+        if (value === null) return;
+        const selection = parseRunOnPickerValue(value);
+        if (selection.kind === "auto") onAutoEnvironment?.();
+        else if (selection.kind === "launcher") environmentLaunch?.onSelect(selection.launcherId);
+        else onEnvironmentChange(selection.environmentId);
+      }}
       items={environmentItems}
     >
       <Tooltip>
@@ -99,7 +130,9 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             />
           }
         >
-          {autoEnvironmentLabel ? (
+          {selectedLauncher ? (
+            <PlusIcon className="size-3 shrink-0" aria-hidden="true" />
+          ) : autoEnvironmentLabel ? (
             <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
           ) : (
             <EnvironmentMachineIcon
@@ -111,7 +144,9 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             <SelectValue />
           </ComposerContextLabel>
         </TooltipTrigger>
-        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+        <TooltipPopup>
+          {launcherLabel ?? autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}
+        </TooltipPopup>
       </Tooltip>
       <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>
@@ -134,6 +169,14 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
               <span className="inline-flex items-center gap-1.5">
                 <EnvironmentMachineIcon kind={env.machine} className="size-3" />
                 {env.label}
+              </span>
+            </SelectItem>
+          ))}
+          {environmentLaunch?.launchers.map((launcher) => (
+            <SelectItem key={launcher.id} value={launcherPickerValue(launcher.id)}>
+              <span className="inline-flex items-center gap-1.5">
+                <PlusIcon className="size-3" aria-hidden="true" />
+                New {launcher.label}
               </span>
             </SelectItem>
           ))}

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  launcherPickerValue,
+  parseRunOnPickerValue,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
   resolveCurrentWorkspaceLabel,
@@ -16,6 +18,7 @@ import {
   resolveLocalCheckoutBranchMismatch,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
+  resolveRunOnPickerValue,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
   shouldShowComposerContextStrip,
@@ -881,5 +884,43 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("Run on picker values", () => {
+  it("shows a pending launcher over auto balance and the current environment", () => {
+    expect(
+      resolveRunOnPickerValue({
+        environmentId: localEnvironmentId,
+        autoEnvironment: true,
+        selectedLauncherId: "boat",
+      }),
+    ).toBe(launcherPickerValue("boat"));
+    expect(
+      resolveRunOnPickerValue({
+        environmentId: localEnvironmentId,
+        autoEnvironment: true,
+        selectedLauncherId: null,
+      }),
+    ).toBe("auto");
+    expect(
+      resolveRunOnPickerValue({
+        environmentId: localEnvironmentId,
+        autoEnvironment: false,
+        selectedLauncherId: null,
+      }),
+    ).toBe(localEnvironmentId);
+  });
+
+  it("parses each kind of value back to its selection", () => {
+    expect(parseRunOnPickerValue("auto")).toEqual({ kind: "auto" });
+    expect(parseRunOnPickerValue(launcherPickerValue("boat"))).toEqual({
+      kind: "launcher",
+      launcherId: "boat",
+    });
+    expect(parseRunOnPickerValue(remoteEnvironmentId)).toEqual({
+      kind: "environment",
+      environmentId: remoteEnvironmentId,
+    });
   });
 });

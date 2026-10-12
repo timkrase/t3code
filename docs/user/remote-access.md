@@ -179,6 +179,40 @@ running is left alone.
 For Antigravity's Google callback on a remote host, see
 [remote sign-in](./providers-antigravity.md#sign-in-from-a-remote-device).
 
+### Launch machines on demand
+
+An environment launcher creates a new SSH machine, such as a cloud sandbox,
+whenever you need one. Add it in **Settings → Connections → Environment
+launchers** with a name and a command. In a new thread, pick **New <name>**
+under **Run on**. Nothing starts until you send. Then a fresh draft opens so
+you can keep working, and the sent draft waits in the sidebar while the desktop
+app runs the command, connects to the machine over SSH, adds the project there,
+and sends your message on it. If a step fails, the draft keeps your message and
+you can open it from the sidebar to try again.
+
+The command runs in your login shell, from the project's folder when the
+project is on this computer. It receives `T3CODE_PROJECT_TITLE` and
+`T3CODE_PROJECT_ROOT`. It may log progress, but its last line on stdout must be
+JSON naming an SSH host or alias and the checkout on that machine:
+
+```json
+{ "label": "sandbox-42", "ssh": { "host": "sandbox-42" }, "projectPath": "/home/user/app" }
+```
+
+`ssh` also accepts `user` and `port`. The machine must meet the SSH host
+requirements above. An optional destroy command runs when you remove a launched
+environment from this device, or when a launch fails after the machine was
+created, with `T3CODE_SSH_HOST` set to the host it printed. Removing it deletes
+the machine and the threads on it.
+
+Optional stop and wake commands keep an idle machine from costing money. Once
+every thread on a launched machine is settled, the desktop app runs the stop
+command and switches the environment off. Sending a message to one of its
+threads runs the wake command, reconnects, un-settles the thread, and sends.
+The environment's switch in **Settings → Connections** stops and wakes it the
+same way. Both commands get the same `T3CODE_SSH_HOST`. The desktop app does
+this only while it is open.
+
 ## Browser on a remote environment
 
 Browser tabs belong to the environment, so you and your agents see the same

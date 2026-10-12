@@ -910,6 +910,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "environment-launchers",
+    title: "Environment launchers",
+    to: "/settings/connections",
+    searchTerms: ["new machine sandbox cloud vm on demand create destroy ssh command script"],
+  },
+  {
     id: "github-routing",
     title: "GitHub sharing",
     to: "/settings/connections",

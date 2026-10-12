@@ -291,6 +291,36 @@ export const LoadBalancingWeights = Schema.Record(
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
 );
 
+/**
+ * A shell command the desktop app runs to create a new machine on demand,
+ * such as a cloud sandbox. `command` prints an `EnvironmentLauncherOutput`
+ * line on stdout; T3 Code then connects to it as an SSH environment.
+ * `destroyCommand` runs when a launched environment is removed,
+ * `stopCommand` once all its threads are settled, and `wakeCommand` when a
+ * message is sent to a stopped one.
+ */
+export const EnvironmentLauncher = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  command: TrimmedNonEmptyString,
+  destroyCommand: Schema.optionalKey(TrimmedNonEmptyString),
+  stopCommand: Schema.optionalKey(TrimmedNonEmptyString),
+  wakeCommand: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type EnvironmentLauncher = typeof EnvironmentLauncher.Type;
+
+/**
+ * An environment a launcher created, kept so T3 Code can stop, wake, and
+ * destroy the machine. A stopped one stays saved but switched off.
+ */
+export const LaunchedEnvironment = Schema.Struct({
+  environmentId: TrimmedNonEmptyString,
+  launcherId: TrimmedNonEmptyString,
+  sshHost: TrimmedNonEmptyString,
+  stopped: Schema.optionalKey(Schema.Boolean),
+});
+export type LaunchedEnvironment = typeof LaunchedEnvironment.Type;
+
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
 /** Maximum width of the chat timeline and composer on wide screens. */
@@ -308,6 +338,13 @@ export const ClientSettingsSchema = Schema.Struct({
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // Desktop-only: launchers run local commands and connect over SSH.
+  environmentLaunchers: Schema.Array(EnvironmentLauncher).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  launchedEnvironments: Schema.Array(LaunchedEnvironment).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
   ),
@@ -1552,6 +1589,8 @@ export const ClientSettingsPatch = Schema.Struct({
   chatWidth: Schema.optionalKey(ChatWidth),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
+  environmentLaunchers: Schema.optionalKey(Schema.Array(EnvironmentLauncher)),
+  launchedEnvironments: Schema.optionalKey(Schema.Array(LaunchedEnvironment)),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
   panelAnimationDurationMs: Schema.optionalKey(PanelAnimationDurationMs),
   browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),
