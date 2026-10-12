@@ -212,7 +212,10 @@ const RunContextSelector = memo(function RunContextSelector({
         ? resolveEnvModeLabel("worktree")
         : resolveCurrentWorkspaceLabel(activeWorktreePath);
   const isPanel = displayMode === "panel";
-  const isLocked = envLocked || (envModeLocked && (!isPanel || !showEnvironmentPicker));
+  // A pending launcher locks only the workspace; its machine can still be changed.
+  const isLocked =
+    envLocked ||
+    (envModeLocked && selectedLauncher === null && (!isPanel || !showEnvironmentPicker));
   const workspacePath =
     forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
       ? null
@@ -734,7 +737,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
 
   // A pending launcher's machine brings its own checkout on a fresh branch, so
-  // there is no workspace or base branch to pick.
+  // there is no workspace or base branch to pick; it reads as a new worktree.
   const launcherPending = Boolean(environmentLaunch?.selectedLauncherId);
   const showCheckoutControls = showGitControls && !launcherPending;
   const showEnvironmentPicker = Boolean(
@@ -771,8 +774,8 @@ export const BranchToolbar = memo(function BranchToolbar({
             showEnvironmentIndicator={activeEnvironmentOption !== null}
             onEnvironmentChange={onEnvironmentChange}
             environmentLaunch={environmentLaunch}
-            effectiveEnvMode={effectiveEnvMode}
-            activeWorktreePath={activeWorktreePath}
+            effectiveEnvMode={launcherPending ? "worktree" : effectiveEnvMode}
+            activeWorktreePath={launcherPending ? null : activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
@@ -826,8 +829,8 @@ export const BranchToolbar = memo(function BranchToolbar({
             showEnvironmentIndicator={showEnvironmentIndicator}
             onEnvironmentChange={onEnvironmentChange}
             environmentLaunch={environmentLaunch}
-            effectiveEnvMode={effectiveEnvMode}
-            activeWorktreePath={activeWorktreePath}
+            effectiveEnvMode={launcherPending ? "worktree" : effectiveEnvMode}
+            activeWorktreePath={launcherPending ? null : activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
