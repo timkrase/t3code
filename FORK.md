@@ -5,6 +5,14 @@ scheme, and state in `~/.t2`, so it runs beside the official T3 Code apps withou
 state. It adds environment launchers (on-demand machines such as boat.dev sandboxes, started on
 send, stopped once their threads settle, woken on the next message).
 
+## Update
+
+`scripts/t2-update.sh` merges the newest upstream nightly tag into `main`, typechecks, builds t2
+with that nightly's version, installs it to `/Applications`, and pushes `main`. It works in its own
+worktree (`../t3code-t2-update`), so a running dev app is left alone. On a merge conflict it stops;
+resolve and commit in that worktree, then run it again. Nightly tags are merged rather than
+`upstream/main` because each has a published release, whose server SSH environments install.
+
 ## Branches
 
 - `main` is upstream T3 Code plus this fork's changes. Work on short branches off `main` and
