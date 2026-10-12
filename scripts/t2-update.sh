@@ -74,7 +74,7 @@ PATH="$worktree/node_modules/.bin:$PATH" T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR=$
 zip="$worktree/release/t2-$version-arm64.zip"
 
 if [ "$install" = 1 ]; then
-  while [ "$(osascript -e 'application id "com.timkrase.t2" is running')" = "true" ]; do
+  while [ "$(osascript -e 'application id "com.timkrase.t2" is running' 2>/dev/null)" = "true" ]; do
     read -r -p "Quit t2, then press Enter to install $version. " _
   done
   unpacked=$(mktemp -d)
