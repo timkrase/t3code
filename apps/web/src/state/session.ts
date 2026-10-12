@@ -4,7 +4,6 @@ import {
   type AuthEnvironmentScope,
   type AuthSessionState,
   type EnvironmentId,
-  sessionGrantsScope,
 } from "@t3tools/contracts";
 import { useMemo } from "react";
 import * as Option from "effect/Option";
@@ -12,6 +11,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { sessionHasScope } from "./sessionScope";
 
 export const environmentSession = createEnvironmentSessionAtoms(connectionAtomRuntime);
 
@@ -28,14 +28,6 @@ export function useEnvironmentScope(
       : environmentSession.sessionStateAtom(environmentId),
   );
   return sessionHasScope(result, scope);
-}
-
-function sessionHasScope(
-  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
-  scope: AuthEnvironmentScope,
-): boolean {
-  const session = Option.getOrNull(AsyncResult.value(result));
-  return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
 }
 
 /** Subscribe to the grants of every selected environment. */
