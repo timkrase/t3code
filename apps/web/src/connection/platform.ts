@@ -293,6 +293,21 @@ const layerCapabilities = Layer.effectContext(
             detail: "SSH environments are only available in the desktop app.",
           });
         }
+        // A stopped launched machine is not probed: every attempt would reach its
+        // host only to be refused. Blocked waits for an explicit retry, which
+        // waking it sends. Imported lazily: settings import the connection runtime.
+        const { getClientSettings } = yield* Effect.promise(() => import("../hooks/useSettings"));
+        if (
+          getClientSettings().launchedEnvironments.some(
+            (entry) =>
+              entry.environmentId === input.expectedEnvironmentId && entry.stopped === true,
+          )
+        ) {
+          return yield* new ConnectionBlockedError({
+            reason: "configuration",
+            detail: "This machine is stopped. Send a message to one of its threads to wake it.",
+          });
+        }
         const bootstrap = yield* Effect.tryPromise({
           try: () =>
             bridge.ensureSshEnvironment(input.target, {
