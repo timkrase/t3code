@@ -4521,11 +4521,19 @@ export default function ChatView(props: ChatViewProps) {
             { environmentSelection: "manual", loadBalancedEnvironmentId: null },
           );
         } else {
+          // Another machine gets a worktree of its own; this one works in its checkout.
+          const envMode = target.environmentId === primaryEnvironmentId ? "local" : "worktree";
           setDraftThreadContext(draftId, {
             projectRef,
             pendingLauncherId: null,
             environmentSelection: "manual",
             loadBalancedEnvironmentId: null,
+            envMode,
+            startFromOrigin: resolveNewDraftStartFromOrigin({
+              envMode,
+              newWorktreesStartFromOrigin:
+                activeProjectSettings.settings.newWorktreesStartFromOrigin,
+            }),
           });
         }
       };
@@ -4554,12 +4562,14 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       activeProjectIsScratch,
+      activeProjectSettings.settings.newWorktreesStartFromOrigin,
       allProjects,
       draftId,
       envLocked,
       getDraftSession,
       logicalProjectEnvironments,
       openScratchProject,
+      primaryEnvironmentId,
       projectGroupingSettings,
       sendInFlightRef,
       setDraftThreadContext,

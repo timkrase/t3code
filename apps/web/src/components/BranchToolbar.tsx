@@ -733,6 +733,10 @@ export const BranchToolbar = memo(function BranchToolbar({
     ],
   );
 
+  // A pending launcher's machine brings its own checkout on a fresh branch, so
+  // there is no workspace or base branch to pick.
+  const launcherPending = Boolean(environmentLaunch?.selectedLauncherId);
+  const showCheckoutControls = showGitControls && !launcherPending;
   const showEnvironmentPicker = Boolean(
     availableEnvironments &&
     (availableEnvironments.length > 1 || (environmentLaunch?.launchers.length ?? 0) > 0) &&
@@ -760,7 +764,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             autoEnvironmentLabel={autoEnvironmentLabel}
             onAutoEnvironment={onAutoEnvironment}
             envLocked={envLocked}
-            envModeLocked={envModeLocked}
+            envModeLocked={envModeLocked || launcherPending}
             environmentId={environmentId}
             availableEnvironments={availableEnvironments}
             showEnvironmentPicker={showEnvironmentPicker}
@@ -775,7 +779,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             onUsePreviousWorktree={onUsePreviousWorktree}
           />
         ) : null}
-        {panelSection !== "workspace" ? (
+        {panelSection !== "workspace" && !launcherPending ? (
           <BranchToolbarBranchSelector
             displayMode="panel"
             className="w-full"
@@ -815,7 +819,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             autoEnvironmentLabel={autoEnvironmentLabel}
             onAutoEnvironment={onAutoEnvironment}
             envLocked={envLocked}
-            envModeLocked={envModeLocked}
+            envModeLocked={envModeLocked || launcherPending}
             environmentId={environmentId}
             availableEnvironments={availableEnvironments}
             showEnvironmentPicker={showEnvironmentPicker}
@@ -850,7 +854,7 @@ export const BranchToolbar = memo(function BranchToolbar({
                 {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
                 environmentLaunch={environmentLaunch}
               />
-              {showGitControls ? (
+              {showCheckoutControls ? (
                 <Separator
                   orientation="vertical"
                   className="mx-0.5 h-3.5!"
@@ -859,7 +863,7 @@ export const BranchToolbar = memo(function BranchToolbar({
               ) : null}
             </>
           )}
-          {showGitControls ? (
+          {showCheckoutControls ? (
             <BranchToolbarEnvModeSelector
               forceNewWorktree={forceNewWorktree}
               envLocked={envModeLocked}
@@ -886,7 +890,7 @@ export const BranchToolbar = memo(function BranchToolbar({
         />
       ) : null}
 
-      {showGitControls ? (
+      {showCheckoutControls ? (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}
           ref={branchSelectorRef}
