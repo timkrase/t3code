@@ -17,7 +17,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
-import { ChildProcess } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
@@ -688,6 +688,20 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       port: input.port,
       devUrl: input.devUrl,
     });
+    if (input.mode === "dev:desktop" && !env.T3CODE_DEV_REMOTE_T3_VERSION) {
+      // SSH environments install a published server release, and an unpackaged
+      // app has no version of its own. The newest release in this checkout's
+      // history speaks the protocol the source does.
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const tag = yield* spawner
+        .string(
+          ChildProcess.make("git", ["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"], {
+            stdin: "ignore",
+          }),
+        )
+        .pipe(Effect.orElseSucceed(() => ""));
+      if (tag.trim()) env.T3CODE_DEV_REMOTE_T3_VERSION = tag.trim().replace(/^v/, "");
+    }
 
     const selectionSuffix =
       serverOffset !== offset || webOffset !== offset

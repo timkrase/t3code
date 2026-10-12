@@ -939,8 +939,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       let spawnCount = 0;
       const spawnerLayer = Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() => {
-          spawnCount += 1;
+        ChildProcessSpawner.make((command) => {
+          // dev:desktop also asks git for the release its SSH environments install.
+          if (command._tag !== "StandardCommand" || command.command !== "git") spawnCount += 1;
           return Effect.succeed(mockProcess(0));
         }),
       );

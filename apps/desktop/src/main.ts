@@ -114,7 +114,13 @@ const resolveDesktopSshCliRunner = (
       nodeEngineRange: serverPackageJson.engines.node,
     };
   }
-  return { archiveVersion: environment.appVersion };
+  // An unpackaged app reports Electron's version, which has no t3 release;
+  // the dev runner names the newest release in the checkout's history instead.
+  return {
+    archiveVersion: environment.isDevelopment
+      ? Option.getOrElse(environment.devRemoteT3Version, () => serverPackageJson.version)
+      : environment.appVersion,
+  };
 };
 
 const layerDesktopSshEnvironment = Layer.unwrap(
