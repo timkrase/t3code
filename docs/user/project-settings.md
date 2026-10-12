@@ -183,6 +183,25 @@ When no image is found, web and desktop show a two-character monogram with a col
 from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
 `Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.
 
+## Pages a checkout serves
+
+A thread's details panel lists the pages its checkout serves, such as a dev stack's frontends
+and APIs, under **Pages**. The script that starts the stack writes them to `.t3/pages.json` in
+the checkout, which you keep out of version control:
+
+```json
+{
+  "status": "running",
+  "pages": [{ "name": "AI frontend", "url": "http://localhost:13850", "group": "ai" }]
+}
+```
+
+`group` sorts pages by the part of the project they belong to. `status` is optional:
+`starting` or `failed` (with a `detail`) shows next to the heading. A page opens where
+**Open links in** says, so a remote machine's `localhost` page opens in its own browser tab;
+the second button opens it in the system browser, which reaches it only when the port is
+forwarded to this computer.
+
 ## Keep the default branch current
 
 In Source Control, enable **Automatically pull** to keep the default-branch checkout up to date
