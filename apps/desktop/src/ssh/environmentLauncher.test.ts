@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   parseEnvironmentLauncherOutput,
@@ -41,8 +41,8 @@ describe("runEnvironmentLauncherCommand", () => {
       });
       assert.strictEqual(stdout, "app");
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "linux"),
-      Effect.provideService(HostProcessEnvironment, { SHELL: "/bin/sh" }),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Environment, { SHELL: "/bin/sh" }),
       Effect.provide(NodeServices.layer),
     ),
   );
@@ -57,8 +57,8 @@ describe("runEnvironmentLauncherCommand", () => {
       assert.include(error.message, "exited with code 3");
       assert.include(error.message, "boat: quota exceeded");
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "linux"),
-      Effect.provideService(HostProcessEnvironment, { SHELL: "/bin/sh" }),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Environment, { SHELL: "/bin/sh" }),
       Effect.provide(NodeServices.layer),
     ),
   );

@@ -10,7 +10,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeOS from "node:os";
 
 // Creating a sandbox can include pulling images and booting a stack.
@@ -48,8 +48,8 @@ function tail(text: string): string {
 export const runEnvironmentLauncherCommand = Effect.fn("desktop.environmentLauncher.run")(
   function* (input: DesktopEnvironmentLauncherRunInput) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const platform = yield* HostProcessPlatform;
-    const hostEnv = yield* HostProcessEnvironment;
+    const platform = yield* HostProcess.Platform;
+    const hostEnv = yield* HostProcess.Environment;
     const [file, args] =
       platform === "win32"
         ? ["cmd.exe", ["/d", "/s", "/c", input.command]]

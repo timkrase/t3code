@@ -2,6 +2,7 @@ import type { EnvironmentLauncher } from "@t3tools/contracts";
 import { useState, type FormEvent } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { randomUUID } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { EnvironmentRow } from "./EnvironmentRow";
@@ -45,7 +46,7 @@ export function EnvironmentLaunchersSettings() {
     const optional = (key: "destroyCommand" | "stopCommand" | "wakeCommand", value: string) =>
       value.trim() ? { [key]: value.trim() } : {};
     const saved: EnvironmentLauncher = {
-      id: editingId ?? crypto.randomUUID(),
+      id: editingId ?? randomUUID(),
       label: label.trim(),
       command: command.trim(),
       ...optional("destroyCommand", destroyCommand),
