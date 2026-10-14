@@ -7,11 +7,21 @@ send, stopped once their threads settle, woken on the next message).
 
 ## Update
 
-`scripts/t2-update.sh` merges the newest upstream nightly tag into `main`, typechecks, builds t2
-with that nightly's version, installs it to `/Applications`, and pushes `main`. It works in its own
-worktree (`../t3code-t2-update`), so a running dev app is left alone. On a merge conflict it stops;
-resolve and commit in that worktree, then run it again. Nightly tags are merged rather than
-`upstream/main` because each has a published release, whose server SSH environments install.
+`scripts/t2-update.sh` merges the newest upstream nightly tag into `main`, typechecks, builds t2,
+pushes `main`, publishes the server for SSH environments (below), and installs t2 to
+`/Applications`. It works in its own worktree (`../t3code-t2-update`), so a running dev app is left
+alone. On a merge conflict it stops; resolve and commit in that worktree, then run it again. Run it
+after merging fork changes too: a new commit gets a new build even on the same nightly.
+
+## Server for SSH environments
+
+SSH environments install the server release whose version equals the app's. t2 is versioned
+`<upstream nightly>.t2-<commit>`, and pushing the tag `v<version>` runs
+`.github/workflows/t2-server.yml`, which builds the Linux server archives and publishes them as that
+tag's release here. t2 downloads versions containing `.t2-` from this repository's releases
+(`apps/desktop/src/main.ts`) and any other version from upstream. The commit in the version keeps
+each build in its own runtime directory on the host, so a host that already has upstream's server
+for the same nightly still installs t2's.
 
 ## Branches
 
@@ -33,9 +43,8 @@ resolve and commit in that worktree, then run it again. Nightly tags are merged 
 
 ## Build and install
 
-SSH environments install the published T3 server release whose version equals the app's, so build
-with the newest upstream release tag in `main`'s history. Without Rust, reuse the resource monitor
-from an installed official app.
+Build with a t2 version whose server is published (see above). Without Rust, reuse the resource
+monitor from an installed official app.
 
 ```sh
 mkdir -p native/resource-monitor/target/aarch64-apple-darwin/release
@@ -43,7 +52,7 @@ cp "/Applications/T3 Code (Nightly).app/Contents/Resources/resource-monitor/t3-r
   native/resource-monitor/target/aarch64-apple-darwin/release/
 PATH="$PWD/node_modules/.bin:$PATH" T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR=true \
   node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 \
-  --build-version "$(git describe --tags --abbrev=0 --match 'v[0-9]*' | sed 's/^v//')"
+  --build-version "$(git describe --tags --abbrev=0 --match 'v*.t2-*' | sed 's/^v//')"
 ```
 
 Build from a separate worktree: switching branches in the checkout a dev app runs from restarts it.

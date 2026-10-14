@@ -103,6 +103,12 @@ const layerDesktopEnvironment = Layer.unwrap(
   }),
 );
 
+// t2 builds are versioned `<upstream release>.t2-<commit>`, and the t2 server
+// workflow publishes their server archives to this fork's releases (see
+// FORK.md). Any other version is an upstream release.
+const T2_VERSION_MARKER = ".t2-";
+const T2_RELEASE_BASE_URL = "https://github.com/timkrase/t3code/releases/download";
+
 // The remote runs the exact release this app is on, from its self-contained
 // archive, so it needs neither Node nor npm. Development points the remote at
 // a source checkout instead so the two sides can be iterated together.
@@ -118,10 +124,12 @@ const resolveDesktopSshCliRunner = (
   }
   // An unpackaged app reports Electron's version, which has no t3 release;
   // the dev runner names the newest release in the checkout's history instead.
+  const archiveVersion = environment.isDevelopment
+    ? Option.getOrElse(environment.devRemoteT3Version, () => serverPackageJson.version)
+    : environment.appVersion;
   return {
-    archiveVersion: environment.isDevelopment
-      ? Option.getOrElse(environment.devRemoteT3Version, () => serverPackageJson.version)
-      : environment.appVersion,
+    archiveVersion,
+    ...(archiveVersion.includes(T2_VERSION_MARKER) ? { releaseBaseUrl: T2_RELEASE_BASE_URL } : {}),
   };
 };
 
