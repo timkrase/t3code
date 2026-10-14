@@ -1,4 +1,4 @@
-import type { ClaudeSettings } from "@t3tools/contracts";
+import type { ClaudeSettings, ProviderInstanceEnvironment } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -6,6 +6,10 @@ import * as Schema from "effect/Schema";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  listLoginShellCandidates,
+  readEnvironmentFromLoginShellAsync,
+} from "@t3tools/shared/shell";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
@@ -73,6 +77,38 @@ export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(
   return yield* fileSystem.exists(managedMcpConfigPath).pipe(Effect.orElseSucceed(() => false));
 });
 
+const CLAUDE_OAUTH_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN";
+
+/**
+ * Re-reads `CLAUDE_CODE_OAUTH_TOKEN` from a login shell for a server that
+ * inherited it from the shell it was started in. Sandbox hosts renew the token
+ * in the shell profile while the server runs and revoke the copy this process
+ * holds. Undefined when the instance sets the token itself or none was
+ * inherited, since there is nothing newer to read. The read yields undefined
+ * when no shell provides one; keep the current token then.
+ */
+export const makeClaudeOAuthTokenRefresh = (input: {
+  readonly instanceEnvironment: ProviderInstanceEnvironment | undefined;
+  readonly hostEnvironment: NodeJS.ProcessEnv;
+  readonly platform: NodeJS.Platform;
+}): Effect.Effect<string | undefined> | undefined => {
+  if (input.platform === "win32") return undefined;
+  if (!input.hostEnvironment[CLAUDE_OAUTH_TOKEN]) return undefined;
+  if (input.instanceEnvironment?.some((variable) => variable.name === CLAUDE_OAUTH_TOKEN)) {
+    return undefined;
+  }
+  const shells = listLoginShellCandidates(input.platform, input.hostEnvironment.SHELL);
+  return Effect.gen(function* () {
+    for (const shell of shells) {
+      const environment = yield* readEnvironmentFromLoginShellAsync(shell, [
+        CLAUDE_OAUTH_TOKEN,
+      ]).pipe(Effect.orElseSucceed(() => undefined));
+      if (environment !== undefined) return environment[CLAUDE_OAUTH_TOKEN];
+    }
+    return undefined;
+  });
+};
+
 export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationGroupKey")(
   function* (
     config: Pick<ClaudeSettings, "homePath">,
@@ -108,3 +144,6 @@ export const claudeSignedOutMessage = (input: {
       : "";
   return `Claude could not authenticate. For subscription login, run \`claude auth login\` on this environment's machine${configuration}, then start a new thread. For API-key authentication, check this instance's configured credentials.`;
 };
+
+export const CLAUDE_OAUTH_TOKEN_RENEWED_MESSAGE =
+  "Claude's sign-in token on this machine was renewed during this turn. T3 Code picked up the new one; send your message again.";

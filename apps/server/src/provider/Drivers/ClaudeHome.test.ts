@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import {
@@ -10,6 +11,7 @@ import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
+  makeClaudeOAuthTokenRefresh,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 
@@ -75,6 +77,48 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       expect(message).not.toContain("CLAUDE_CONFIG_DIR=");
       expect(message).toContain("then start a new thread");
     });
+
+    it.effect("re-reads an inherited sign-in token from the login shell", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-shell-" });
+        // Stands in for a login shell whose profile exports the renewed token.
+        const shell = path.join(dir, "login-shell");
+        yield* fileSystem.writeFileString(
+          shell,
+          '#!/bin/sh\nCLAUDE_CODE_OAUTH_TOKEN=renewed exec /bin/sh -c "$2"\n',
+        );
+        yield* fileSystem.chmod(shell, 0o755);
+        const hostEnvironment = { CLAUDE_CODE_OAUTH_TOKEN: "stale", SHELL: shell };
+
+        const refresh = makeClaudeOAuthTokenRefresh({
+          instanceEnvironment: undefined,
+          hostEnvironment,
+          platform: "linux",
+        });
+        expect(refresh).toBeDefined();
+        expect(yield* refresh!).toBe("renewed");
+
+        const instanceToken = [
+          { name: "CLAUDE_CODE_OAUTH_TOKEN", value: "pinned", sensitive: true },
+        ];
+        expect(
+          makeClaudeOAuthTokenRefresh({
+            instanceEnvironment: instanceToken,
+            hostEnvironment,
+            platform: "linux",
+          }),
+        ).toBeUndefined();
+        expect(
+          makeClaudeOAuthTokenRefresh({
+            instanceEnvironment: undefined,
+            hostEnvironment: { SHELL: shell },
+            platform: "linux",
+          }),
+        ).toBeUndefined();
+      }).pipe(Effect.scoped),
+    );
 
     it.effect("separates capability probes by cwd", () =>
       Effect.gen(function* () {

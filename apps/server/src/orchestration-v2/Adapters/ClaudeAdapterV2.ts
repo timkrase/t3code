@@ -120,6 +120,8 @@ import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
+  makeClaudeOAuthTokenRefresh,
+  CLAUDE_OAUTH_TOKEN_RENEWED_MESSAGE,
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -3109,6 +3111,8 @@ interface ClaudeLiveQueryContext {
   readonly queryPolicyKey: string;
   // The selection this process runs now. Live changes update it.
   selection: CompiledClaudeModelSelection;
+  // The CLI reads its sign-in token once, so a renewed one needs a new process.
+  readonly oauthToken: string | undefined;
   readonly closed: Deferred.Deferred<void, never>;
   // Retained for process-exit cleanup even when its last turn failed.
   lastTurn: ActiveClaudeTurnContext | null;
@@ -3452,6 +3456,11 @@ export interface ClaudeAdapterV2Options {
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
+  /**
+   * Reads the current `CLAUDE_CODE_OAUTH_TOKEN` before each process opens, for
+   * an inherited token the host renews (see makeClaudeOAuthTokenRefresh).
+   */
+  readonly refreshOAuthToken?: Effect.Effect<string | undefined>;
   /** Sink for wake-turn continuation requests; defaults to dropping them. */
   readonly continuationRequests?: {
     readonly offer: (
@@ -3473,6 +3482,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const continuationRequests = adapterOptions.continuationRequests ?? {
     offer: () => Effect.void,
   };
+  const oauthToken = Ref.makeUnsafe(adapterOptions.environment.CLAUDE_CODE_OAUTH_TOKEN);
+  // The token a process opened now should get, after picking up a renewal.
+  const currentOAuthToken = Effect.gen(function* () {
+    const renewed =
+      adapterOptions.refreshOAuthToken === undefined
+        ? undefined
+        : yield* adapterOptions.refreshOAuthToken;
+    if (renewed !== undefined) yield* Ref.set(oauthToken, renewed);
+    return yield* Ref.get(oauthToken);
+  });
 
   // Re-scan on every send: skills are added and switched off mid-session, and
   // the scan is a few directory reads. A skill switched off via skillOverrides,
@@ -7027,10 +7046,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (message.parent_tool_use_id === null) {
               context.latestAssistantRateLimited = message.error === "rate_limit";
               if (message.error === "authentication_failed") {
-                context.authenticationFailureMessage = claudeSignedOutMessage({
-                  configDir: adapterOptions.environment.CLAUDE_CONFIG_DIR,
-                  cwd: path.resolve(context.input.runtimePolicy.cwd ?? "."),
-                });
+                const previousToken = yield* Ref.get(oauthToken);
+                context.authenticationFailureMessage =
+                  (yield* currentOAuthToken) !== previousToken
+                    ? CLAUDE_OAUTH_TOKEN_RENEWED_MESSAGE
+                    : claudeSignedOutMessage({
+                        configDir: adapterOptions.environment.CLAUDE_CONFIG_DIR,
+                        cwd: path.resolve(context.input.runtimePolicy.cwd ?? "."),
+                      });
               }
             }
           }
@@ -8459,6 +8482,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return existing;
           }
+          const oauthToken = yield* currentOAuthToken;
           // Model, effort, ultracode and fast mode change on the live process.
           // A restart would kill its background agents and shells.
           if (
@@ -8488,7 +8512,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
             existing.queryPolicyKey === queryPolicyKey &&
-            existing.selection.queryIdentity === compiledSelection.queryIdentity
+            existing.selection.queryIdentity === compiledSelection.queryIdentity &&
+            // Replacing the process for a renewed token would kill its
+            // background work; the old token may still be accepted.
+            (existing.oauthToken === oauthToken ||
+              (!existing.stopping && (yield* liveProcessRunsBackgroundWork(existing))))
           ) {
             // Claude can switch its own mode mid-session (EnterPlanMode), and
             // a denied ExitPlanMode leaves it there. Put the live process back
@@ -8548,7 +8576,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
             settings: adapterOptions.settings,
-            environment: adapterOptions.environment,
+            environment:
+              oauthToken === undefined
+                ? adapterOptions.environment
+                : { ...adapterOptions.environment, CLAUDE_CODE_OAUTH_TOKEN: oauthToken },
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...(mcpOverrides.allowedTools === undefined
               ? {}
@@ -8616,6 +8647,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             query: querySession,
             queryPolicyKey,
             selection: compiledSelection,
+            oauthToken,
             closed,
             lastTurn: null,
             promptEchoMode: "unknown",
@@ -9533,6 +9565,11 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const baseEnvironment = yield* mergeProviderInstanceEnvironment(environment, hostEnvironment);
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
+    const refreshOAuthToken = makeClaudeOAuthTokenRefresh({
+      instanceEnvironment: environment,
+      hostEnvironment,
+      platform: yield* HostProcess.Platform,
+    });
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
     const binaryPath = yield* resolveClaudeSdkExecutablePath(
@@ -9550,6 +9587,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       idAllocator,
       queryRunner,
       continuationRequests,
+      ...(refreshOAuthToken === undefined ? {} : { refreshOAuthToken }),
       ...hooks,
     });
   },

@@ -99,6 +99,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+  /** Re-reads an inherited sign-in token before each call (makeClaudeOAuthTokenRefresh). */
+  refreshOAuthToken?: Effect.Effect<string | undefined>,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -201,6 +203,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
+      const renewedToken = refreshOAuthToken === undefined ? undefined : yield* refreshOAuthToken;
+      const spawnEnvironment =
+        renewedToken === undefined
+          ? claudeEnvironment
+          : { ...claudeEnvironment, CLAUDE_CODE_OAUTH_TOKEN: renewedToken };
       // Titles need only the supplied prompt, not configuration from the checkout.
       const workingDirectory =
         operation === "generateThreadTitle"
@@ -246,10 +253,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--permission-mode",
           "dontAsk",
         ],
-        { env: claudeEnvironment },
+        { env: spawnEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: claudeEnvironment,
+        env: spawnEnvironment,
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {

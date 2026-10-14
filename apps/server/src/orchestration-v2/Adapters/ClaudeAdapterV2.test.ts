@@ -2344,6 +2344,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
     readonly settings?: ClaudeSettings;
+    readonly refreshOAuthToken?: Effect.Effect<string | undefined>;
     // A CLI process opened after the first streams from its own queue, so the
     // first one can exit (Queue.shutdown) and a later turn can start another.
     readonly freshQueueOnReopen?: boolean;
@@ -2392,6 +2393,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
         environment: options?.environment ?? {},
+        ...(options?.refreshOAuthToken === undefined
+          ? {}
+          : { refreshOAuthToken: options.refreshOAuthToken }),
         attachmentsDir,
         fileSystem,
         path: yield* Path.Path,
@@ -3334,6 +3338,90 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       if (terminal.status !== "failed") return;
       assert.equal(terminal.failure.message, cliText);
       assert.equal(terminal.failure.code, "api_error_403");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("opens a new process with a sign-in token the host renewed between turns", () =>
+    Effect.gen(function* () {
+      let shellToken = "token-at-start";
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CODE_OAUTH_TOKEN: "token-at-start" },
+        refreshOAuthToken: Effect.sync(() => shellToken),
+        freshQueueOnReopen: true,
+      });
+      const now = yield* DateTime.now;
+      const startTurn = (attempt: string) =>
+        harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(attempt),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+
+      yield* startTurn("attempt-claude-token-1");
+      assert.equal(harness.getOpenedOptions()?.env?.CLAUDE_CODE_OAUTH_TOKEN, "token-at-start");
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000611", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+
+      shellToken = "token-renewed";
+      yield* startTurn("attempt-claude-token-2");
+      assert.equal(harness.processQueues.length, 2);
+      assert.equal(harness.getOpenedOptions()?.env?.CLAUDE_CODE_OAUTH_TOKEN, "token-renewed");
+      assert.equal(harness.getOpenedOptions()?.resume, WAKE_NATIVE_SESSION);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("says to send again when the sign-in token was renewed during the turn", () =>
+    Effect.gen(function* () {
+      let shellToken = "token-at-start";
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CODE_OAUTH_TOKEN: "token-at-start" },
+        refreshOAuthToken: Effect.sync(() => shellToken),
+      });
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-token-revoked"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      shellToken = "token-renewed";
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000612",
+          error: "authentication_failed",
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000613",
+          result: "API Error",
+          terminalReason: "api_error",
+        }),
+      ]);
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.include(terminal.failure.message, "renewed during this turn");
+      assert.notInclude(terminal.failure.message, "claude auth login");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

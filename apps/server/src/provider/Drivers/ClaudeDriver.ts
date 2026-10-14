@@ -69,6 +69,7 @@ import {
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
+  makeClaudeOAuthTokenRefresh,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -199,6 +200,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         effectiveConfig,
         processEnv,
         modelCatalog,
+        makeClaudeOAuthTokenRefresh({
+          instanceEnvironment: environment,
+          hostEnvironment: yield* HostProcess.Environment,
+          platform: yield* HostProcess.Platform,
+        }),
       );
 
       // Per-instance capabilities cache: keyed on binary + resolved HOME so

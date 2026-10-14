@@ -279,6 +279,34 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
     timeout: 5000,
   });
 
+  return extractEnvironment(output, names);
+};
+
+/**
+ * {@link readEnvironmentFromLoginShell} without blocking the event loop, for
+ * reads made while the server is serving clients.
+ */
+export const readEnvironmentFromLoginShellAsync = (
+  shell: string,
+  names: ReadonlyArray<string>,
+): Effect.Effect<Partial<Record<string, string>>, Error> =>
+  names.length === 0
+    ? Effect.succeed({})
+    : Effect.callback((resume, signal) => {
+        NodeChildProcess.execFile(
+          shell,
+          ["-ilc", buildEnvironmentCaptureCommand(names)],
+          { encoding: "utf8", timeout: 5000, signal },
+          (error, stdout) => {
+            resume(error ? Effect.fail(error) : Effect.succeed(extractEnvironment(stdout, names)));
+          },
+        );
+      });
+
+function extractEnvironment(
+  output: string,
+  names: ReadonlyArray<string>,
+): Partial<Record<string, string>> {
   const environment: Partial<Record<string, string>> = {};
   for (const name of names) {
     const value = extractEnvironmentValue(output, name);
@@ -286,9 +314,8 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
       environment[name] = value;
     }
   }
-
   return environment;
-};
+}
 
 export type WindowsShellEnvironmentReader = (
   names: ReadonlyArray<string>,

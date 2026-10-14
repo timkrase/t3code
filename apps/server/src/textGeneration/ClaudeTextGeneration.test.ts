@@ -60,8 +60,10 @@ function withFakeClaudeEnv<A, E, R>(
     argsMustNotContain?: string;
     stdinMustContain?: string;
     configDirMustBe?: string;
+    oauthTokenMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
+    refreshOAuthToken?: Effect.Effect<string | undefined>;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -78,6 +80,7 @@ function withFakeClaudeEnv<A, E, R>(
     const previousArgsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
     const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
     const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
+    const previousOAuthTokenMustBe = process.env.T3_FAKE_CLAUDE_OAUTH_TOKEN_MUST_BE;
     const previousCwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
 
     yield* Effect.acquireRelease(
@@ -125,6 +128,12 @@ function withFakeClaudeEnv<A, E, R>(
           process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = input.configDirMustBe;
         } else {
           delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
+        }
+
+        if (input.oauthTokenMustBe !== undefined) {
+          process.env.T3_FAKE_CLAUDE_OAUTH_TOKEN_MUST_BE = input.oauthTokenMustBe;
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_OAUTH_TOKEN_MUST_BE;
         }
       }),
       () =>
@@ -178,6 +187,12 @@ function withFakeClaudeEnv<A, E, R>(
           } else {
             process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = previousConfigDirMustBe;
           }
+
+          if (previousOAuthTokenMustBe === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_OAUTH_TOKEN_MUST_BE;
+          } else {
+            process.env.T3_FAKE_CLAUDE_OAUTH_TOKEN_MUST_BE = previousOAuthTokenMustBe;
+          }
         }),
     );
 
@@ -186,6 +201,7 @@ function withFakeClaudeEnv<A, E, R>(
       config,
       undefined,
       Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
+      input.refreshOAuthToken,
     );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
@@ -390,6 +406,29 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           }),
       );
     }),
+  );
+
+  it.effect("runs Claude text generation with a sign-in token the host renewed", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Use renewed token" } }),
+        oauthTokenMustBe: "token-renewed",
+        refreshOAuthToken: Effect.succeed("token-renewed"),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "thread title",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+
+          expect(generated.title).toBe(sanitizeThreadTitle("Use renewed token"));
+        }),
+    ),
   );
 
   it.effect.each([

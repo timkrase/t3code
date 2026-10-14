@@ -63,6 +63,11 @@ if (configDirMustBe && process.env.CLAUDE_CONFIG_DIR !== configDirMustBe) {
   fail("CLAUDE_CONFIG_DIR was " + (process.env.CLAUDE_CONFIG_DIR ?? ""), 5);
 }
 
+const oauthTokenMustBe = process.env.T3_FAKE_CLAUDE_OAUTH_TOKEN_MUST_BE;
+if (oauthTokenMustBe && process.env.CLAUDE_CODE_OAUTH_TOKEN !== oauthTokenMustBe) {
+  fail("CLAUDE_CODE_OAUTH_TOKEN was " + (process.env.CLAUDE_CODE_OAUTH_TOKEN ?? ""), 5);
+}
+
 const stderrText = process.env.T3_FAKE_CLAUDE_STDERR;
 if (stderrText) {
   process.stderr.write(stderrText + "\n");
