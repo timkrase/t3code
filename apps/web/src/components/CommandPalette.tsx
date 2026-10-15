@@ -119,6 +119,7 @@ import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
+import { resolveNewThreadProjectRef } from "../state/launchedEnvironments.logic";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
@@ -873,16 +874,34 @@ function OpenCommandPaletteDialog(props: {
       ),
     [clientSettings.sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
-  const contextualProjectRef = useMemo(
-    () =>
-      resolveThreadActionProjectRef({
-        activeDraftThread,
-        activeThread: activeThread ?? undefined,
-        defaultProjectRef,
-        handleNewThread,
-      }),
-    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread],
-  );
+  // Resolved like a new thread's project, so a thread on a launched machine
+  // offers this machine's checkout of its project.
+  const contextualProjectRef = useMemo(() => {
+    const projectRef = resolveThreadActionProjectRef({
+      activeDraftThread,
+      activeThread: activeThread ?? undefined,
+      defaultProjectRef,
+      handleNewThread,
+    });
+    return projectRef === null
+      ? null
+      : resolveNewThreadProjectRef({
+          projectRef,
+          projects,
+          launched: clientSettings.launchedEnvironments,
+          primaryEnvironmentId,
+          groupingSettings: projectGroupingSettings,
+        });
+  }, [
+    activeDraftThread,
+    activeThread,
+    clientSettings.launchedEnvironments,
+    defaultProjectRef,
+    handleNewThread,
+    primaryEnvironmentId,
+    projectGroupingSettings,
+    projects,
+  ]);
   const projectPickerEntries = useMemo(
     () =>
       buildSidebarProjectPickerEntries({

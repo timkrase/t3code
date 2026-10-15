@@ -193,6 +193,11 @@ app runs the command, connects to the machine over SSH, adds the project there,
 and sends your message on it. If a step fails, the draft keeps your message and
 you can open it from the sidebar to try again.
 
+A launched machine belongs to the thread it was started for. A new thread
+started while you view one of its threads opens on this computer, in your
+checkout of the same repository. To work on the machine again, pick it under
+**Run on**.
+
 The command runs in your login shell, from the project's folder when the
 project is on this computer. It receives `T3CODE_PROJECT_TITLE` and
 `T3CODE_PROJECT_ROOT`. It may log progress, but its last line on stdout must be

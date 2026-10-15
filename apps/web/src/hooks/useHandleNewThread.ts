@@ -40,7 +40,9 @@ import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
-import { useClientSettings } from "./useSettings";
+import { resolveNewThreadProjectRef } from "../state/launchedEnvironments.logic";
+import { usePrimaryEnvironmentId } from "../state/environments";
+import { getClientSettings, useClientSettings } from "./useSettings";
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -64,6 +66,7 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
 export function useNewThreadHandler() {
   const environmentServerConfigs = useAtomValue(environmentServerConfigsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
     const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
@@ -72,7 +75,7 @@ export function useNewThreadHandler() {
 
   return useCallback(
     (
-      projectRef: ScopedProjectRef,
+      requestedProjectRef: ScopedProjectRef,
       options?: {
         branch?: string | null;
         worktreePath?: string | null;
@@ -85,6 +88,17 @@ export function useNewThreadHandler() {
       // up again and finding whichever draft it happens to hold.
     ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
       const projects = readProjects();
+      // A caller that names a branch or worktree means that machine's checkout.
+      const projectRef =
+        options?.branch !== undefined || options?.worktreePath !== undefined
+          ? requestedProjectRef
+          : resolveNewThreadProjectRef({
+              projectRef: requestedProjectRef,
+              projects,
+              launched: getClientSettings().launchedEnvironments,
+              primaryEnvironmentId,
+              groupingSettings: projectGroupingSettings,
+            });
       const targetServerSettings =
         environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
       const {
@@ -450,7 +464,13 @@ export function useNewThreadHandler() {
         return { draftId, threadId };
       })();
     },
-    [environmentServerConfigs, getCurrentRouteTarget, projectGroupingSettings, router],
+    [
+      environmentServerConfigs,
+      getCurrentRouteTarget,
+      primaryEnvironmentId,
+      projectGroupingSettings,
+      router,
+    ],
   );
 }
 
