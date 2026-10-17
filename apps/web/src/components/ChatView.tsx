@@ -69,7 +69,6 @@ import {
   type PreviewAnnotationPayload,
   ProviderInstanceId,
   type ServerProvider,
-  type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadId,
   type RunId,
@@ -2014,19 +2013,19 @@ export default function ChatView(props: ChatViewProps) {
         title: `Waking ${unavailableWakeLauncher.label}…`,
         timeout: 0,
       });
-      try {
-        await wakeLaunchedEnvironment(environmentId);
-      } catch (error) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: `Could not wake ${unavailableWakeLauncher.label}`,
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      } finally {
-        toastManager.close(toastId);
-      }
+      // Promise handlers, not try/finally: React Compiler skips a component with
+      // try/finally, and this one relies on its memoization to settle.
+      await wakeLaunchedEnvironment(environmentId)
+        .catch((error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: `Could not wake ${unavailableWakeLauncher.label}`,
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        })
+        .finally(() => toastManager.close(toastId));
       return;
     }
     const result = await retryEnvironment(environmentId);
@@ -6189,15 +6188,17 @@ export default function ChatView(props: ChatViewProps) {
       description: "Your message sends once the machine is back.",
       timeout: 0,
     });
-    try {
-      await wakeLaunchedEnvironment(environmentId);
-    } catch (error) {
+    const woken = await wakeLaunchedEnvironment(environmentId)
+      .then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error }),
+      )
+      .finally(() => toastManager.close(toastId));
+    if (!woken.ok) {
       return fail(
         `Could not wake ${launcher.label}`,
-        error instanceof Error ? error.message : "An error occurred.",
+        woken.error instanceof Error ? woken.error.message : "An error occurred.",
       );
-    } finally {
-      toastManager.close(toastId);
     }
     if (!isModelReadyOn(environmentId, activeProject?.id ?? null, modelSelection)) {
       return fail(
@@ -6273,17 +6274,19 @@ export default function ChatView(props: ChatViewProps) {
       description: "Your message sends once the machine is connected.",
       timeout: 0,
     });
-    let projectRef: ScopedProjectRef;
-    try {
-      projectRef = await launchEnvironment(launcher, sourceProject);
-    } catch (error) {
+    const launched = await launchEnvironment(launcher, sourceProject)
+      .then(
+        (projectRef) => ({ ok: true as const, projectRef }),
+        (error: unknown) => ({ ok: false as const, error }),
+      )
+      .finally(() => toastManager.close(toastId));
+    if (!launched.ok) {
       return fail(
         `Could not start ${launcher.label}`,
-        error instanceof Error ? error.message : "An error occurred.",
+        launched.error instanceof Error ? launched.error.message : "An error occurred.",
       );
-    } finally {
-      toastManager.close(toastId);
     }
+    const { projectRef } = launched;
     const draft = getDraftSession(launchingDraftId);
     if (!draft || draft.promotedTo) return null;
     // The launched checkout is already the thread's own branch, so it runs there.
@@ -7558,12 +7561,10 @@ export default function ChatView(props: ChatViewProps) {
     const alreadyHeld = appAtomRegistry.get(holdAtom) !== null;
     // Settled threads on a machine this send wakes must not stop it mid-send.
     const releaseAwake = wakeLauncher ? holdLaunchedEnvironmentAwake(environmentId) : null;
-    try {
-      await sendComposerMessage(...args);
-    } finally {
+    await sendComposerMessage(...args).finally(() => {
       releaseAwake?.();
       if (!alreadyHeld) appAtomRegistry.set(holdAtom, null);
-    }
+    });
   };
 
   async function onSubmitPlanFollowUp({
