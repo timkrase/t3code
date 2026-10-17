@@ -2726,8 +2726,43 @@ export default function ChatView(props: ChatViewProps) {
       connection: activeEnvironment.connection,
     };
   }, [activeEnvironment, activeEnvironmentUnavailable, activeEnvironmentUnavailableLabel]);
+  const environmentLaunchers = useClientSettings(selectEnvironmentLaunchers);
+  const launchedEnvironments = useClientSettings(selectLaunchedEnvironments);
+  // A launched machine can be stopped behind this app's back, as when a sandbox's
+  // lifetime runs out, and retrying ssh never brings it back. Reconnecting it wakes it.
+  const unavailableWakeLauncher = (() => {
+    if (!activeEnvironmentUnavailableState) return null;
+    const launched = launchedEnvironments.find(
+      (entry) => entry.environmentId === activeEnvironmentUnavailableState.environmentId,
+    );
+    const launcher = launched
+      ? environmentLaunchers.find((entry) => entry.id === launched.launcherId)
+      : undefined;
+    return launcher?.wakeCommand === undefined ? null : launcher;
+  })();
   const handleReconnectActiveEnvironment = useCallback(
     async (environmentId: EnvironmentId) => {
+      if (unavailableWakeLauncher) {
+        const toastId = toastManager.add({
+          type: "loading",
+          title: `Waking ${unavailableWakeLauncher.label}…`,
+          timeout: 0,
+        });
+        try {
+          await wakeLaunchedEnvironment(environmentId);
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: `Could not wake ${unavailableWakeLauncher.label}`,
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        } finally {
+          toastManager.close(toastId);
+        }
+        return;
+      }
       const result = await retryEnvironment(environmentId);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -2740,7 +2775,7 @@ export default function ChatView(props: ChatViewProps) {
         );
       }
     },
-    [retryEnvironment],
+    [retryEnvironment, unavailableWakeLauncher],
   );
   const disconnectDelayElapsed = useEnvironmentDisconnectDelay(
     activeEnvironmentUnavailable ? activeEnvironment.environmentId : null,
@@ -3154,7 +3189,7 @@ export default function ChatView(props: ChatViewProps) {
         title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
         actions: (
           <>
-            {!environmentReconnecting ? (
+            {!environmentReconnecting || unavailableWakeLauncher ? (
               <Button
                 size="xs"
                 variant="ghost"
@@ -3164,7 +3199,7 @@ export default function ChatView(props: ChatViewProps) {
                   )
                 }
               >
-                Reconnect
+                {unavailableWakeLauncher ? "Wake" : "Reconnect"}
               </Button>
             ) : null}
             {disconnectAction}
@@ -3259,6 +3294,7 @@ export default function ChatView(props: ChatViewProps) {
     autoBalanceUpdateBanner,
     activeEnvironmentUnavailableState,
     handleReconnectActiveEnvironment,
+    unavailableWakeLauncher,
     canDisconnectActiveEnvironment,
     disconnectingEnvironment,
     handleDisconnectActiveEnvironment,
@@ -4589,8 +4625,6 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  const environmentLaunchers = useClientSettings(selectEnvironmentLaunchers);
-  const launchedEnvironments = useClientSettings(selectLaunchedEnvironments);
   // A launched machine that is stopped or gone wakes when this composer sends.
   const wakeLauncher = (() => {
     const launched = launchedEnvironments.find((entry) => entry.environmentId === environmentId);

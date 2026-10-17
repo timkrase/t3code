@@ -217,7 +217,8 @@ Optional stop and wake commands keep an idle machine from costing money. Once
 every thread on a launched machine is settled, the desktop app runs the stop
 command and switches the environment off. Sending a message to one of its
 threads runs the wake command, reconnects, un-settles the thread, and sends.
-The environment's switch in **Settings → Connections** stops and wakes it the
+When a launched machine is offline, as when it stopped on its own, **Wake** on
+its thread runs the wake command and reconnects. The environment's switch in **Settings → Connections** stops and wakes it the
 same way. Both commands get the same `T3CODE_SSH_HOST`. The desktop app does
 this only while it is open.
 
