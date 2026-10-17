@@ -1,5 +1,11 @@
 # T3 Code
 
+> **This checkout is t2, Tim Krase's fork of T3 Code** (`origin` is `timkrase/t3code`, `upstream` is `pingdotgg/t3code`). Read [FORK.md](FORK.md) first: it lists what t2 adds on top of upstream and how it is built, synced, and released. The rest of this file is upstream's guide and still applies to the code, with these overrides:
+>
+> - **we** means Tim and the agents working on t2, not upstream's maintainers.
+> - Branch off and merge into this fork's `main`. PRs, when asked for, target `timkrase/t3code`. Only propose a fix upstream when asked, following FORK.md.
+> - When fork work adds or changes a t2 feature, update "What t2 adds" in FORK.md in the same change.
+
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity) and serves web, desktop, and mobile clients.
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.

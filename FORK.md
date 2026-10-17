@@ -2,8 +2,33 @@
 
 This fork builds T3 Code as **t2**: its own app name, bundle id (`com.timkrase.t2`), `t2://`
 scheme, and state in `~/.t2`, so it runs beside the official T3 Code apps without sharing their
-state. It adds environment launchers (on-demand machines such as boat.dev sandboxes, started on
-send, stopped once their threads settle, woken on the next message).
+state.
+
+## What t2 adds
+
+Changes that live only in this fork. `git log --no-merges main ^upstream/main` shows the full
+history.
+
+- **Environment launchers** for remote dev on on-demand machines, such as boat.dev sandboxes. A
+  launcher command creates the machine and prints its SSH host and checkout. The machine starts
+  when you send, stops once its threads settle, and wakes on the next message or from the offline
+  banner of its thread. User guide:
+  `docs/user/remote-access.md`. Code: `apps/desktop/src/ssh/environmentLauncher.ts`,
+  `apps/web/src/state/launchedEnvironments.ts`, `apps/web/src/hooks/useEnvironmentLauncher.ts`,
+  `apps/web/src/components/settings/EnvironmentLaunchersSettings.tsx`.
+- **Machine-aware workspace picking.** Picking a machine under Run on also picks the workspace that
+  fits it. New threads started from a launched machine open on this computer.
+- **Project pages** in the thread details panel list the pages a checkout serves
+  (`packages/contracts/src/projectPages.ts`).
+- **t2 branding and release.** Its own app identity (below), `scripts/t2-update.sh`, and its own
+  server release for SSH environments.
+- **Fixes that are not upstream yet:** Claude picks up a renewed token from the login shell,
+  projects in partial clones keep their repository, and a timed-out session refresh keeps the last
+  grant.
+
+Fork code inside upstream components must keep them compilable by React Compiler: upstream's
+`ChatView` relies on it to settle its render, and the compiler skips a component containing
+`try`/`finally`. Use promise handlers there instead.
 
 ## Update
 
