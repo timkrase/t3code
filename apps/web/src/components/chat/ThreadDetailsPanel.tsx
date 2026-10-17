@@ -52,7 +52,6 @@ export interface ThreadDetailsPanelProps extends Pick<
   onEnvironmentChange: (environmentId: EnvironmentId) => void;
   environmentLaunch?: EnvironmentLaunchOptions | undefined;
   onEnvModeChange: (mode: EnvMode) => void;
-  /** The thread's env mode as ChatView resolves it. */
   envMode: EnvMode;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
